@@ -18,6 +18,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -115,6 +116,153 @@ public class DispatcharrClient : IDispatcharrClient
         {
             _logger.LogDebug(ex, "Failed to get Dispatcharr movie providers for ID {MovieId}", movieId);
             return new List<DispatcharrMovieProvider>();
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<VodInfoResponse?> GetMovieProviderInfoAsync(string baseUrl, int movieId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var json = await GetAuthenticatedAsync(baseUrl, $"{baseUrl}/api/vod/movies/{movieId}/provider-info/", cancellationToken).ConfigureAwait(false);
+            if (json == null)
+            {
+                return null;
+            }
+
+            var dto = JsonConvert.DeserializeObject<DispatcharrMovieProviderInfoDto>(json);
+            if (dto == null)
+            {
+                return null;
+            }
+
+            return new VodInfoResponse
+            {
+                Info = new VodInfoDetails
+                {
+                    Name = dto.Name,
+                    OriginalName = dto.OName,
+                    Plot = !string.IsNullOrEmpty(dto.Plot) ? dto.Plot : dto.Description,
+                    Cast = dto.Actors,
+                    Director = dto.Director,
+                    Genre = dto.Genre,
+                    Country = dto.Country,
+                    ReleaseDate = dto.ReleaseDate,
+                    Rating = dto.Rating,
+                    TmdbId = dto.TmdbId,
+                    YoutubeTrailer = dto.YoutubeTrailer,
+                    BackdropPaths = dto.BackdropPath ?? new List<string>(),
+                    DurationSecs = dto.DurationSecs,
+                    Bitrate = dto.Bitrate,
+                    Video = dto.Video,
+                    Audio = dto.Audio,
+                },
+                MovieData = new VodMovieData
+                {
+                    StreamId = int.TryParse(dto.StreamId, out var streamId) ? streamId : movieId,
+                    Name = dto.Name ?? string.Empty,
+                    ContainerExtension = dto.ContainerExtension ?? string.Empty,
+                },
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to get Dispatcharr provider info for movie {MovieId}", movieId);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<SeriesInfo?> GetSeriesProviderInfoAsync(string baseUrl, int seriesId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var json = await GetAuthenticatedAsync(baseUrl, $"{baseUrl}/api/vod/series/{seriesId}/provider-info/", cancellationToken).ConfigureAwait(false);
+            if (json == null)
+            {
+                return null;
+            }
+
+            var dto = JsonConvert.DeserializeObject<DispatcharrSeriesProviderInfoDto>(json);
+            if (dto == null)
+            {
+                return null;
+            }
+
+            return new SeriesInfo
+            {
+                Name = dto.Name ?? string.Empty,
+                Plot = dto.Description ?? string.Empty,
+                Genre = dto.Genre ?? string.Empty,
+                Rating = decimal.TryParse(dto.Rating, out var rating) ? rating : 0,
+                BackdropPaths = dto.BackdropPath ?? new List<string>(),
+                Tmdb = dto.TmdbId,
+                Imdb = dto.ImdbId,
+                CategoryId = dto.CategoryId ?? 0,
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to get Dispatcharr provider info for series {SeriesId}", seriesId);
+            return null;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<Dictionary<int, ICollection<Episode>>> GetSeriesEpisodesAsync(string baseUrl, int seriesId, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<int, ICollection<Episode>>();
+        try
+        {
+            var json = await GetAuthenticatedAsync(baseUrl, $"{baseUrl}/api/vod/series/{seriesId}/episodes/", cancellationToken).ConfigureAwait(false);
+            if (json == null)
+            {
+                return result;
+            }
+
+            var episodes = JsonConvert.DeserializeObject<List<DispatcharrEpisodeDto>>(json);
+            if (episodes == null)
+            {
+                return result;
+            }
+
+            foreach (var ep in episodes)
+            {
+                if (ep.Providers == null || ep.Providers.Count == 0 || ep.SeasonNumber == null)
+                {
+                    continue;
+                }
+
+                // Same "highest account priority wins" rule Dispatcharr itself uses server-side
+                // when multiple providers carry the same episode.
+                var best = ep.Providers.OrderByDescending(p => p.M3uAccount?.Priority ?? 0).First();
+                if (!int.TryParse(best.StreamId, out var episodeStreamId))
+                {
+                    continue;
+                }
+
+                if (!result.TryGetValue(ep.SeasonNumber.Value, out var seasonEpisodes))
+                {
+                    seasonEpisodes = new List<Episode>();
+                    result[ep.SeasonNumber.Value] = seasonEpisodes;
+                }
+
+                seasonEpisodes.Add(new Episode
+                {
+                    EpisodeId = episodeStreamId,
+                    EpisodeNum = ep.EpisodeNumber ?? 0,
+                    Title = ep.Name ?? string.Empty,
+                    ContainerExtension = best.ContainerExtension ?? "mkv",
+                    Season = ep.SeasonNumber.Value,
+                });
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to get Dispatcharr episodes for series {SeriesId}", seriesId);
+            return result;
         }
     }
 

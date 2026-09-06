@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Linq;
 using System.Net;
 using System.Text;
 using FluentAssertions;
@@ -152,6 +153,237 @@ public class DispatcharrClientTests : IDisposable
         var result = await client.GetMovieDetailAsync("http://test.example.com", 999, CancellationToken.None);
 
         result.Should().BeNull();
+    }
+
+    #endregion
+
+    #region GetMovieProviderInfoAsync Tests
+
+    [Fact]
+    public async Task GetMovieProviderInfo_ReturnsMappedVodInfoResponse()
+    {
+        // Shape verified live against a running Dispatcharr instance's
+        // GET /api/vod/movies/{id}/provider-info/ response.
+        var providerInfo = new
+        {
+            stream_id = "1479430",
+            name = "Wolfs",
+            o_name = "Wolfs",
+            description = "A fixer's night spirals out of control.",
+            plot = "A fixer's night spirals out of control.",
+            genre = "Action,Comedy,Thriller",
+            director = "",
+            actors = "",
+            country = "",
+            release_date = "2024-09-20",
+            rating = "6.653",
+            tmdb_id = "",
+            youtube_trailer = "",
+            backdrop_path = Array.Empty<string>(),
+            duration_secs = 0,
+            bitrate = 0,
+            video = new { },
+            audio = new { },
+            container_extension = "mp4",
+        };
+
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/vod/movies/42/provider-info/", HttpStatusCode.OK, JsonConvert.SerializeObject(providerInfo)));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetMovieProviderInfoAsync("http://test.example.com", 42, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Info.Should().NotBeNull();
+        result.Info!.Name.Should().Be("Wolfs");
+        result.Info.Plot.Should().Be("A fixer's night spirals out of control.");
+        result.Info.Genre.Should().Be("Action,Comedy,Thriller");
+        result.Info.ReleaseDate.Should().Be("2024-09-20");
+        result.Info.Rating.Should().Be("6.653");
+        result.MovieData.Should().NotBeNull();
+        result.MovieData!.StreamId.Should().Be(1479430);
+        result.MovieData.ContainerExtension.Should().Be("mp4");
+    }
+
+    [Fact]
+    public async Task GetMovieProviderInfo_NotFound_ReturnsNull()
+    {
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/vod/movies/999/provider-info/", HttpStatusCode.NotFound, "{}"));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetMovieProviderInfoAsync("http://test.example.com", 999, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    #endregion
+
+    #region GetSeriesProviderInfoAsync Tests
+
+    [Fact]
+    public async Task GetSeriesProviderInfo_ReturnsMappedSeriesInfo()
+    {
+        // Shape verified live against a running Dispatcharr instance's
+        // GET /api/vod/series/{id}/provider-info/ response.
+        var providerInfo = new
+        {
+            name = "Alone: Frozen",
+            description = "Alone veterans survive 50 brutal days in Labrador.",
+            genre = "Reality",
+            rating = "8.0",
+            tmdb_id = "207055",
+            imdb_id = (string?)null,
+            category_id = 349,
+            backdrop_path = new[] { "http://dispatcharr.example.com/api/vod/series/7916/image/?kind=backdrop" },
+        };
+
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/vod/series/7916/provider-info/", HttpStatusCode.OK, JsonConvert.SerializeObject(providerInfo)));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetSeriesProviderInfoAsync("http://test.example.com", 7916, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Name.Should().Be("Alone: Frozen");
+        result.Plot.Should().Be("Alone veterans survive 50 brutal days in Labrador.");
+        result.Genre.Should().Be("Reality");
+        result.Rating.Should().Be(8.0m);
+        result.Tmdb.Should().Be("207055");
+        result.CategoryId.Should().Be(349);
+        result.BackdropPaths.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task GetSeriesProviderInfo_NotFound_ReturnsNull()
+    {
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/vod/series/999/provider-info/", HttpStatusCode.NotFound, "{}"));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetSeriesProviderInfoAsync("http://test.example.com", 999, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    #endregion
+
+    #region GetSeriesEpisodesAsync Tests
+
+    [Fact]
+    public async Task GetSeriesEpisodes_GroupsBySeasonAndPicksHighestPriorityProvider()
+    {
+        // Shape verified live against a running Dispatcharr instance's
+        // GET /api/vod/series/{id}/episodes/ response (trimmed to the fields this plugin reads;
+        // the live response nests a lot more per-provider account/profile data than this).
+        var episodes = new[]
+        {
+            new
+            {
+                name = "50 Day Freeze",
+                season_number = 1,
+                episode_number = 1,
+                providers = new[]
+                {
+                    new
+                    {
+                        stream_id = "111111",
+                        container_extension = "mkv",
+                        m3u_account = new { priority = 1 },
+                    },
+                    new
+                    {
+                        stream_id = "266574",
+                        container_extension = "mkv",
+                        m3u_account = new { priority = 3 },
+                    },
+                },
+            },
+            new
+            {
+                name = "Frost Bound",
+                season_number = 1,
+                episode_number = 2,
+                providers = new[]
+                {
+                    new
+                    {
+                        stream_id = "266575",
+                        container_extension = "mkv",
+                        m3u_account = new { priority = 3 },
+                    },
+                },
+            },
+        };
+
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/vod/series/7916/episodes/", HttpStatusCode.OK, JsonConvert.SerializeObject(episodes)));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetSeriesEpisodesAsync("http://test.example.com", 7916, CancellationToken.None);
+
+        result.Should().ContainKey(1);
+        result[1].Should().HaveCount(2);
+        var first = result[1].Single(e => e.EpisodeNum == 1);
+        first.EpisodeId.Should().Be(266574, "the priority-3 provider should win over priority-1");
+        first.Title.Should().Be("50 Day Freeze");
+        first.ContainerExtension.Should().Be("mkv");
+    }
+
+    [Fact]
+    public async Task GetSeriesEpisodes_SkipsEpisodesWithNoProviders()
+    {
+        var episodes = new[]
+        {
+            new
+            {
+                name = "Orphaned Episode",
+                season_number = 1,
+                episode_number = 1,
+                providers = Array.Empty<object>(),
+            },
+        };
+
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/vod/series/7916/episodes/", HttpStatusCode.OK, JsonConvert.SerializeObject(episodes)));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetSeriesEpisodesAsync("http://test.example.com", 7916, CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetSeriesEpisodes_NotFound_ReturnsEmpty()
+    {
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/vod/series/999/episodes/", HttpStatusCode.NotFound, "{}"));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetSeriesEpisodesAsync("http://test.example.com", 999, CancellationToken.None);
+
+        result.Should().BeEmpty();
     }
 
     #endregion
