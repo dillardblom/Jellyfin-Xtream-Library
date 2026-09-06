@@ -76,8 +76,11 @@ test('Setup URLs section explains the three URLs go in three different places', 
 
 test('Setup URLs section no longer says all three URLs go in Add Tuner', () => {
     // Old wording implied the M3U, EPG and Catch-up all belong in the same Add Tuner dialog.
+    // The page uses HTML entities (&rarr;) for arrows, but the legacy sentence opener
+    // "Add these URLs to Jellyfin's Live TV settings" is the real regression signal and
+    // does not depend on arrow encoding.
     assert.doesNotMatch(
         CONFIG_HTML,
-        /Add these URLs to Jellyfin's Live TV settings \(Dashboard . Live TV . Add Tuner\)/,
+        /Add these URLs to Jellyfin's Live TV settings/,
         'old single-line setup instruction implied all URLs go in one place');
 });
