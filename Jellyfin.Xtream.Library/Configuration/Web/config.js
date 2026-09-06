@@ -1,4 +1,21 @@
-const XtreamLibraryConfig = {
+// config.js is loaded twice in the same JS realm when the Jellyfin dashboard AJAX-replaces
+// the plugin config page (revisit + back, or remove-provider then return). The previous shape
+// was a top-level `const XtreamLibraryConfig = { ... }`; re-declaring a top-level `const` in the
+// same realm throws SyntaxError before any code below runs, which detaches every event handler
+// that initXtreamLibraryConfig() binds at the bottom of this file. Two layers of fix:
+//
+//   1. The outer binding is `var`, not `const`. `var` redeclaration in classic script scope is
+//      a no-op, so the second eval parses silently. (GitHub #101.)
+//   2. The object literal lives inside an IIFE that returns a cached `globalThis.XtreamLibraryConfig`
+//      on re-entry, so the literal is built once and reused.
+//
+// Both layers are needed: the IIFE alone does not prevent the outer `const` SyntaxError because
+// the parser sees the declaration before it runs the body.
+var XtreamLibraryConfig = (function () {
+    if (typeof globalThis !== 'undefined' && globalThis.XtreamLibraryConfig) {
+        return globalThis.XtreamLibraryConfig;
+    }
+    const obj = {
     pluginUniqueId: '63ba5fcd-c8ce-421a-83e8-ba0b11030d53',
 
     // Multi-provider state
@@ -2507,7 +2524,13 @@ const XtreamLibraryConfig = {
             statusSpan.innerHTML = '<span style="color: red;">Failed: ' + (error.message || 'Check console for details') + '</span>';
         });
     }
-};
+    };
+
+    if (typeof globalThis !== 'undefined') {
+        globalThis.XtreamLibraryConfig = obj;
+    }
+    return obj;
+})();
 
 // Initialize when DOM is ready
 function initXtreamLibraryConfig() {
