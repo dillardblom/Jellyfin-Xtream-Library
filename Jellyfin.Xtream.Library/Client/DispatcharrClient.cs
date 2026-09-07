@@ -165,6 +165,10 @@ public class DispatcharrClient : IDispatcharrClient
                 },
             };
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to get Dispatcharr provider info for movie {MovieId}", movieId);
@@ -200,6 +204,10 @@ public class DispatcharrClient : IDispatcharrClient
                 Imdb = dto.ImdbId,
                 CategoryId = dto.CategoryId ?? 0,
             };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -258,6 +266,10 @@ public class DispatcharrClient : IDispatcharrClient
             }
 
             return result;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {

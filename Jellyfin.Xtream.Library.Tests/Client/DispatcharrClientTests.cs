@@ -388,6 +388,97 @@ public class DispatcharrClientTests : IDisposable
 
     #endregion
 
+    #region Cancellation Tests
+
+    // A canceled request must propagate as a cancellation, not get swallowed by the generic
+    // catch and turned into a null/empty result. StrmSyncService reads a null/empty Dispatcharr
+    // response as "REST came back empty, fall back to the classic Xtream call" - if cancellation
+    // were swallowed the same way, cancelling a sync would silently keep going on the classic
+    // path instead of actually stopping.
+
+    [Fact]
+    public async Task GetMovieProviderInfo_Canceled_PropagatesCancellation()
+    {
+        var handler = new FuncHttpMessageHandler((request, ct) =>
+        {
+            if (request.RequestUri!.ToString().Contains("/api/accounts/token/", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" }),
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
+            throw new OperationCanceledException();
+        });
+
+        var client = new DispatcharrClient(new HttpClient(handler), _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var act = () => client.GetMovieProviderInfoAsync("http://test.example.com", 42, CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetSeriesProviderInfo_Canceled_PropagatesCancellation()
+    {
+        var handler = new FuncHttpMessageHandler((request, ct) =>
+        {
+            if (request.RequestUri!.ToString().Contains("/api/accounts/token/", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" }),
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
+            throw new OperationCanceledException();
+        });
+
+        var client = new DispatcharrClient(new HttpClient(handler), _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var act = () => client.GetSeriesProviderInfoAsync("http://test.example.com", 7916, CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetSeriesEpisodes_Canceled_PropagatesCancellation()
+    {
+        var handler = new FuncHttpMessageHandler((request, ct) =>
+        {
+            if (request.RequestUri!.ToString().Contains("/api/accounts/token/", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" }),
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
+            throw new OperationCanceledException();
+        });
+
+        var client = new DispatcharrClient(new HttpClient(handler), _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var act = () => client.GetSeriesEpisodesAsync("http://test.example.com", 7916, CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    #endregion
+
     #region Token Refresh Tests
 
     [Fact]

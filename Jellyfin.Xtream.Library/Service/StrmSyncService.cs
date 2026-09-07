@@ -505,6 +505,7 @@ public partial class StrmSyncService
         var enableDispatcharrMode = provider.EnableDispatcharrMode && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
         if (enableDispatcharrMode)
         {
+            _dispatcharrClient.RequestDelayMs = provider.RequestDelayMs;
             _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
         }
 
