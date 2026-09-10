@@ -1157,8 +1157,10 @@
                                 <br><br>
                                 <strong>These URLs are unauthenticated by design</strong>, so Jellyfin's own tuner can fetch them directly.
                                 That also means anyone who has one of these URLs gets the Xtream username and password baked into every
-                                stream link in it, no Jellyfin login required. Treat these URLs like your Xtream password, and if this
-                                Jellyfin server is reachable from outside your own network, set the allow-list below.
+                                stream link in it, no Jellyfin login required. Treat these URLs like your Xtream password.
+                                A new install of this plugin starts with the allow-list below restricted to loopback and private
+                                network ranges; if your tuner is configured with a public URL behind a reverse proxy, or you need
+                                another client to reach these URLs from outside your local network, widen the list accordingly.
                             </div>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtM3UUrl">M3U Playlist URL</label>

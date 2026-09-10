@@ -67,6 +67,13 @@ public class LiveTvControllerTests : IDisposable
         _ = new Plugin(appPaths.Object, xmlSerializer.Object);
         Plugin.Instance.Configuration.ChannelOverrides = string.Empty;
 
+        // This fixture always constructs Plugin from a bare PluginConfiguration(), which
+        // SeedSecureLiveTvAllowListIfNeeded (issue #109) treats as a fresh install and
+        // seeds with a real allow-list. Reset to the pre-existing "no restriction"
+        // baseline this test class was written against; the allow-list-specific tests
+        // below set LiveTvEndpointAllowedIps (and the caller IP) explicitly themselves.
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = string.Empty;
+
         var mockClient = new Mock<IXtreamClient>();
         var serverAppPaths = new Mock<IServerApplicationPaths>();
         serverAppPaths.Setup(p => p.DataPath).Returns(tempPath);
