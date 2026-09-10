@@ -226,6 +226,54 @@ public class LiveTvControllerTests : IDisposable
         result.Should().BeOfType<NotFoundResult>();
     }
 
+    [Fact]
+    public async System.Threading.Tasks.Task GetM3UPlaylist_AllowListConfiguredWithOnlyInvalidEntries_ReturnsNotFound()
+    {
+        // A non-blank setting that parses to zero valid entries (a typo) must fail
+        // closed, not silently fall back to the "unset" open behaviour - that would
+        // defeat the restriction the operator explicitly configured. This has to be
+        // rejected before even looking at the caller's IP, so deliberately not calling
+        // SetRemoteIp here: an unresolved HttpContext must not accidentally pass.
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "not-an-ip\n# just a comment, still not a real entry";
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+
+        var result = await _controller.GetM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GetCatchupM3UPlaylist_AllowListConfiguredWithOnlyInvalidEntries_ReturnsNotFound()
+    {
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "300.0.0.0/8";
+        Plugin.Instance.Configuration.EnableLiveTv = true;
+        Plugin.Instance.Configuration.EnableCatchup = true;
+
+        var result = await _controller.GetCatchupM3UPlaylist(System.Threading.CancellationToken.None);
+
+        result.Should().BeOfType<NotFoundResult>();
+    }
+
+    [Fact]
+    public void GetChannelLogo_AllowListConfiguredWithOnlyInvalidEntries_ReturnsNotFound()
+    {
+        Plugin.Instance.Configuration.LiveTvEndpointAllowedIps = "999.999.999.999";
+        var tmp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+        File.WriteAllBytes(tmp, new byte[] { 1, 2, 3 });
+        try
+        {
+            Plugin.Instance.Configuration.ChannelOverrides = "5=Name|1|" + tmp;
+
+            var result = _controller.GetChannelLogo(5);
+
+            result.Should().BeOfType<NotFoundResult>();
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
     private void SetRemoteIp(IPAddress address)
     {
         _controller.ControllerContext = new ControllerContext
