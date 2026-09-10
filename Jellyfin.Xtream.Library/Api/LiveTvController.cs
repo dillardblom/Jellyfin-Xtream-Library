@@ -69,6 +69,11 @@ public class LiveTvController : ControllerBase
     {
         var config = Plugin.Instance.Configuration;
 
+        if (!IsCallerAllowed(config))
+        {
+            return NotFound();
+        }
+
         if (!config.EnableLiveTv)
         {
             return BadRequest(new { Error = "Live TV is not enabled in plugin settings." });
@@ -106,6 +111,11 @@ public class LiveTvController : ControllerBase
     public async Task<IActionResult> GetEpgXml(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
+
+        if (!IsCallerAllowed(config))
+        {
+            return NotFound();
+        }
 
         if (!config.EnableLiveTv)
         {
@@ -149,6 +159,11 @@ public class LiveTvController : ControllerBase
     public async Task<IActionResult> GetCatchupM3UPlaylist(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
+
+        if (!IsCallerAllowed(config))
+        {
+            return NotFound();
+        }
 
         if (!config.EnableLiveTv)
         {
@@ -285,7 +300,7 @@ public class LiveTvController : ControllerBase
     public IActionResult GetChannelLogo([FromRoute] int streamId)
     {
         var config = Plugin.Instance?.Configuration;
-        if (config == null)
+        if (config == null || !IsCallerAllowed(config))
         {
             return NotFound();
         }
@@ -330,6 +345,37 @@ public class LiveTvController : ControllerBase
             ".svg" => "image/svg+xml",
             _ => "application/octet-stream",
         };
+    }
+
+    /// <summary>
+    /// Checks the caller's remote IP against <see cref="PluginConfiguration.LiveTvEndpointAllowedIps"/>
+    /// (issue #109). An empty/unset allow-list means the endpoint stays open, matching
+    /// behaviour before this setting existed. Relies on <see cref="HttpContext.Connection"/>'s
+    /// resolved remote address rather than reading forwarded headers itself, so it reflects
+    /// whatever trusted-proxy configuration the Jellyfin server admin already has in place
+    /// under Dashboard &gt; Networking.
+    /// </summary>
+    /// <param name="config">The current plugin configuration.</param>
+    /// <returns>True if the request should be served.</returns>
+    private bool IsCallerAllowed(PluginConfiguration config)
+    {
+        var allowList = IpAllowListParser.Parse(config.LiveTvEndpointAllowedIps);
+
+        // HttpContext is null when a controller action is invoked directly, outside the
+        // ASP.NET Core pipeline (this project's own controller tests do exactly that).
+        // IpAllowListParser.IsAllowed treats a null address as "unknown caller", which is
+        // only actually reachable when a non-empty allow-list is configured.
+        var remoteIp = HttpContext?.Connection?.RemoteIpAddress;
+        var allowed = IpAllowListParser.IsAllowed(remoteIp, allowList);
+
+        if (!allowed)
+        {
+            _logger.LogWarning(
+                "Rejected Live TV endpoint request from {RemoteIp}, does not match the configured allow-list",
+                remoteIp);
+        }
+
+        return allowed;
     }
 
     private static bool HasProviderCredentials(PluginConfiguration config)
