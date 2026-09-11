@@ -17,7 +17,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
 using FluentAssertions;
+using Jellyfin.Xtream.Library.Service;
 using Jellyfin.Xtream.Library.Tests.Helpers;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Controller;
@@ -337,8 +339,23 @@ public class PluginTests : IDisposable
         var plugin = new Plugin(_appPaths.Object, serializer);
 
         plugin.Configuration.LiveTvEndpointAllowedIps.Should().Be(
-            "127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16");
+            "127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\nfc00::/7");
         plugin.Configuration.HasSeededLiveTvAllowList.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Ctor_FreshInstall_SeededAllowListAllowsIPv6UniqueLocalAddress()
+    {
+        // CodeRabbit review on PR #110: the seeded default originally covered IPv4 private
+        // ranges and IPv6 loopback, but not the IPv6 unique-local range (fc00::/7), the IPv6
+        // analog of RFC1918. A fresh install on an IPv6-only LAN would otherwise 404 its own
+        // local clients despite them being on the local network.
+        var serializer = new RealXmlSerializer();
+        var plugin = new Plugin(_appPaths.Object, serializer);
+
+        var allowList = IpAllowListParser.Parse(plugin.Configuration.LiveTvEndpointAllowedIps);
+
+        IpAllowListParser.IsAllowed(IPAddress.Parse("fd12:3456:789a::10"), allowList).Should().BeTrue();
     }
 
     [Fact]

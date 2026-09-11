@@ -36,7 +36,7 @@ public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     // install only, see SeedSecureLiveTvAllowListIfNeeded. Loopback plus the standard
     // private ranges, local/LAN access is allowed by default, the open internet is not.
     private const string DefaultSecureLiveTvAllowList =
-        "127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16";
+        "127.0.0.1\n::1\n10.0.0.0/8\n172.16.0.0/12\n192.168.0.0/16\nfc00::/7";
 
     // BUG-009: candidate filenames the orphan-config importer will look at, in addition to
     // (and never equal to) whatever ConfigurationFilePath currently resolves to.
