@@ -240,6 +240,23 @@ public class PluginConfiguration : BasePluginConfiguration
     public int CatchupDays { get; set; } = 7;
 
     /// <summary>
+    /// Gets or sets a value indicating whether the catch-up template is written into the playlist
+    /// even on lines that Dispatcharr has already made credential free (GitHub #115).
+    /// </summary>
+    /// <remarks>
+    /// <c>catchup-source</c> is a template an external IPTV client fills in itself, so it has to
+    /// be playable without anything the plugin could hold back, and the only form that exists is
+    /// the Xtream timeshift URL with the username and password in it. Dispatcharr has no
+    /// credential-free equivalent: <c>/proxy/catchup/{uuid}</c> answers 401 to an anonymous caller
+    /// where the live route the stream URLs now use, <c>/proxy/ts/stream/{uuid}</c>, answers 404.
+    /// Measured against Dispatcharr 0.30.0. Since these playlists are served without a Jellyfin
+    /// login, the attribute is left out by default rather than putting the password back into a
+    /// line #113 had emptied. This setting is for anyone who would rather have catch-up in their
+    /// external client than not, and it is counted in the log when the playlist is built.
+    /// </remarks>
+    public bool EmitCredentialedCatchupSource { get; set; }
+
+    /// <summary>
     /// Gets or sets a value indicating whether finished programmes are browsable inside Jellyfin
     /// (GitHub #108).
     /// <para>

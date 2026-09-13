@@ -138,7 +138,7 @@ public class LiveTvService : IDisposable
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
             var categoryNames = await GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
             var m3u = GenerateM3U(channels, config, catchupOnly: false, GetServerBaseUrl(), categoryNames);
-            ReportCredentialExposure(channels);
+            ReportCredentialExposure(channels, config, catchupOnly: false);
 
             _cachedM3U = m3u;
             _m3uCacheTime = DateTime.UtcNow;
@@ -185,6 +185,7 @@ public class LiveTvService : IDisposable
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
             var categoryNames = await GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
             var m3u = GenerateM3U(channels, config, catchupOnly: true, GetServerBaseUrl(), categoryNames);
+            ReportCredentialExposure(channels, config, catchupOnly: true);
 
             _cachedCatchupM3U = m3u;
             _catchupCacheTime = DateTime.UtcNow;
@@ -294,6 +295,10 @@ public class LiveTvService : IDisposable
         {
             StartBackgroundChannelRefresh();
         }
+
+        // Reported here too, and not only on the fetch path, because the snapshot is what normally
+        // answers these requests: a count that fires on the rare path describes the rare file.
+        ReportCredentialExposure(channels, config, catchupOnly);
 
         return GenerateM3U(channels, config, catchupOnly, GetServerBaseUrl(), snapshot.Categories);
     }
@@ -940,9 +945,7 @@ public class LiveTvService : IDisposable
         var sb = new StringBuilder();
         sb.AppendLine("#EXTM3U");
 
-        var filteredChannels = catchupOnly
-            ? channels.Where(c => c.TvArchive && c.TvArchiveDuration > 0).ToList()
-            : channels;
+        var filteredChannels = SelectPlaylistChannels(channels, catchupOnly);
 
         int stride = ChannelNumbering.ComputeStride(filteredChannels);
         bool numberByCategory = config.LiveTvNumberByCategory;
@@ -986,8 +989,12 @@ public class LiveTvService : IDisposable
                 extinf.Append(" radio=\"true\"");
             }
 
-            // Add catch-up attributes if enabled and channel supports it
-            if (config.EnableCatchup && channel.TvArchive && channel.TvArchiveDuration > 0)
+            // Add catch-up attributes if enabled and channel supports it. All three go together:
+            // catchup="default" without a source tells the client to build the URL itself from the
+            // stream URL, which is the Dispatcharr proxy form and has no archive behind it, so
+            // advertising catch-up we cannot supply a template for is worse than staying quiet.
+            if (config.EnableCatchup && channel.TvArchive && channel.TvArchiveDuration > 0
+                && ShouldEmitCatchupSource(config, channel))
             {
                 var catchupDays = CatchupPlanner.DayCount(config.CatchupDays, channel.TvArchiveDuration);
                 extinf.Append(" catchup=\"default\"");
@@ -1018,26 +1025,59 @@ public class LiveTvService : IDisposable
     /// happen looks identical from the outside to one where it does.
     /// </para>
     /// </summary>
-    /// <param name="channels">The channels that were rendered.</param>
-    private void ReportCredentialExposure(List<LiveStreamInfo> channels)
+    /// <param name="channels">The channels behind the playlist, before the catch-up filter.</param>
+    /// <param name="config">Plugin configuration.</param>
+    /// <param name="catchupOnly">Whether this is the catch-up playlist.</param>
+    private void ReportCredentialExposure(List<LiveStreamInfo> channels, PluginConfiguration config, bool catchupOnly)
     {
-        int exposed = CountCredentialBearingChannels(channels);
-        if (exposed == 0)
+        // Counted against what was actually written, not the channel list it came from, because
+        // Catchup.m3u renders a subset and a figure covering the rest would not describe any file.
+        var rendered = SelectPlaylistChannels(channels, catchupOnly);
+        if (rendered.Count == 0)
         {
-            if (channels.Count > 0)
-            {
-                _logger.LogInformation(
-                    "Live TV playlist built entirely from Dispatcharr proxy URLs; it carries no provider credentials");
-            }
-
             return;
         }
 
-        _logger.LogInformation(
-            "Live TV playlist: {Exposed} of {Total} channels have no Dispatcharr match, so those lines carry the provider username and password. This playlist is served without a Jellyfin login.",
-            exposed,
-            channels.Count);
+        int exposed = CountCredentialBearingChannels(rendered);
+        int viaCatchup = CountCredentialedCatchupChannels(config, rendered);
+
+        if (exposed == 0 && viaCatchup == 0)
+        {
+            _logger.LogInformation(
+                "Live TV playlist built entirely from Dispatcharr proxy URLs; it carries no provider credentials");
+            return;
+        }
+
+        if (exposed > 0)
+        {
+            _logger.LogInformation(
+                "Live TV playlist: {Exposed} of {Total} channels have no Dispatcharr match, so those lines carry the provider username and password. This playlist is served without a Jellyfin login.",
+                exposed,
+                rendered.Count);
+        }
+
+        // Reported apart from the figure above because it is a different cause with a different
+        // remedy: these lines had their credentials removed and were given them back by a setting.
+        if (viaCatchup > 0)
+        {
+            _logger.LogInformation(
+                "Live TV playlist: {Exposed} of {Total} channels carry the provider username and password in their catch-up template, because {Setting} is on. Dispatcharr has no credential-free catch-up URL to use instead (GitHub #115); turning the setting off drops the attribute from those lines.",
+                viaCatchup,
+                rendered.Count,
+                nameof(PluginConfiguration.EmitCredentialedCatchupSource));
+        }
     }
+
+    /// <summary>
+    /// The channels a playlist actually renders, which is all of them except on Catchup.m3u.
+    /// </summary>
+    /// <param name="channels">The channels to render from.</param>
+    /// <param name="catchupOnly">Whether this is the catch-up playlist.</param>
+    /// <returns>The channels that will appear in the file.</returns>
+    internal static List<LiveStreamInfo> SelectPlaylistChannels(List<LiveStreamInfo> channels, bool catchupOnly)
+        => catchupOnly
+            ? channels.Where(c => c.TvArchive && c.TvArchiveDuration > 0).ToList()
+            : channels;
 
     /// <summary>
     /// Counts the channels whose stream URL still has credentials in it, meaning the ones
@@ -1047,6 +1087,45 @@ public class LiveTvService : IDisposable
     /// <returns>How many carry credentials.</returns>
     internal static int CountCredentialBearingChannels(IEnumerable<LiveStreamInfo> channels)
         => channels?.Count(c => string.IsNullOrEmpty(c.DispatcharrUuid)) ?? 0;
+
+    /// <summary>
+    /// Whether this channel's catch-up template may go into the playlist (GitHub #115).
+    /// </summary>
+    /// <param name="config">Plugin configuration.</param>
+    /// <param name="channel">The channel being rendered.</param>
+    /// <returns><c>true</c> to write the attribute.</returns>
+    internal static bool ShouldEmitCatchupSource(PluginConfiguration config, LiveStreamInfo channel)
+    {
+        // The user asked for it knowing what it costs, so nothing here overrides that.
+        if (config.EmitCredentialedCatchupSource)
+        {
+            return true;
+        }
+
+        // A channel Dispatcharr could not be matched to kept its Xtream stream URL in #113, so
+        // that line already carries the password. Dropping its catch-up as well would take a
+        // working feature away and remove nothing, and with Dispatcharr off it is every channel,
+        // which is how this stays a no-op for everyone not using it.
+        return string.IsNullOrEmpty(channel.DispatcharrUuid);
+    }
+
+    /// <summary>
+    /// Counts the lines the setting put credentials back into: channels Dispatcharr matched, whose
+    /// stream URL is therefore credential free, and whose catch-up template is not (GitHub #115).
+    /// </summary>
+    /// <param name="config">Plugin configuration.</param>
+    /// <param name="channels">The channels that were rendered.</param>
+    /// <returns>How many carry credentials only because of the opt-in.</returns>
+    internal static int CountCredentialedCatchupChannels(PluginConfiguration config, IEnumerable<LiveStreamInfo> channels)
+    {
+        if (channels == null || !config.EnableCatchup || !config.EmitCredentialedCatchupSource)
+        {
+            return 0;
+        }
+
+        return channels.Count(c =>
+            c.TvArchive && c.TvArchiveDuration > 0 && !string.IsNullOrEmpty(c.DispatcharrUuid));
+    }
 
     internal static string BuildStreamUrl(PluginConfiguration config, LiveStreamInfo channel)
     {

@@ -1167,6 +1167,22 @@
                             </div>
                             <div class="checkboxContainer checkboxContainer-withDescription">
                                 <label class="emby-checkbox-label">
+                                    <input is="emby-checkbox" type="checkbox" id="chkEmitCredentialedCatchupSource" name="EmitCredentialedCatchupSource" />
+                                    <span>Put the catch-up template in the playlist, with your password in it</span>
+                                </label>
+                                <div class="fieldDescription checkboxFieldDescription">
+                                    Only affects setups using Dispatcharr. The catch-up attribute is a URL an external
+                                    IPTV client fills in and plays itself, so it has to work on its own, and the only
+                                    form that exists carries your provider username and password. Dispatcharr has no
+                                    credential-free catch-up URL to use instead. Since LiveTv.m3u and Catchup.m3u are
+                                    served without a Jellyfin login, the attribute is left out by default and those
+                                    channels appear without catch-up in external clients. Turn this on if you would
+                                    rather have catch-up there. Watching catch-up inside Jellyfin is unaffected either
+                                    way.
+                                </div>
+                            </div>
+                            <div class="checkboxContainer checkboxContainer-withDescription">
+                                <label class="emby-checkbox-label">
                                     <input is="emby-checkbox" type="checkbox" id="chkShowCatchupInJellyfin" name="ShowCatchupInJellyfin" />
                                     <span>Watch catch-up inside Jellyfin</span>
                                 </label>
