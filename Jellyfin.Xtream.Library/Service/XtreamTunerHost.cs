@@ -151,7 +151,9 @@ public class XtreamTunerHost : ITunerHost
                 Name = cleanName,
                 Number = channelNumber,
                 ImageUrl = _liveTvService.ResolveChannelLogoUrl(channel.StreamIcon, channel.StreamId),
-                ChannelType = ChannelType.TV,
+                // GitHub #112. Jellyfin keeps radio in its own section, so a station filed as TV
+                // is not just mislabelled, it is in the wrong list entirely.
+                ChannelType = LiveStreamKind.IsRadio(channel.StreamType) ? ChannelType.Radio : ChannelType.TV,
                 TunerHostId = Type,
                 ChannelGroup = channel.CategoryId is int catId && categoryNames.TryGetValue(catId, out var categoryName)
                     ? categoryName
