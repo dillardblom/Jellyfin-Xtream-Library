@@ -29,6 +29,11 @@ const CONFIG_PATH = path.join(
  */
 function loadConfig() {
     delete require.cache[require.resolve(CONFIG_PATH)];
+    // config.js caches itself on globalThis so the dashboard can re-evaluate it in a live realm
+    // without rebuilding the object (GitHub #101). That cache outlives the require cache, so
+    // without this the next loadConfig() hands back the previous test's mutated object and the
+    // isolation this function promises is gone.
+    delete globalThis.XtreamLibraryConfig;
     return require(CONFIG_PATH);
 }
 
