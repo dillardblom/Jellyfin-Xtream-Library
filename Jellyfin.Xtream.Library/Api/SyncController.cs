@@ -33,6 +33,7 @@ using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Xtream.Library.Api;
@@ -282,13 +283,23 @@ public class SyncController : ControllerBase
     /// <summary>
     /// Tests the Dispatcharr REST API connection and JWT authentication.
     /// </summary>
+    /// <param name="request">The credentials as typed into the form. Absent means test what is saved.</param>
     /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Connection test result.</returns>
+    /// <remarks>
+    /// <see cref="EmptyBodyBehavior.Allow"/> is spelled out rather than left to be inferred from
+    /// the nullable annotation. Under <c>[ApiController]</c> a <c>[FromBody]</c> parameter rejects
+    /// an empty body with an automatic 400 unless something says otherwise, and what says
+    /// otherwise here is <c>&lt;Nullable&gt;</c> being enabled project-wide. A caller that sends no
+    /// body is meant to have the saved configuration tested, so that path should not rest on a
+    /// compiler setting that has nothing to do with it.
+    /// </remarks>
     [HttpPost("TestDispatcharr")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult> TestDispatcharr(
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DispatcharrTestRequest? request,
         [FromQuery] int providerIndex = 0,
         CancellationToken cancellationToken = default)
     {
@@ -298,21 +309,27 @@ public class SyncController : ControllerBase
             return BadRequest(new { Success = false, Message = "Plugin not initialized." });
         }
 
-        var provider = config.Providers.ElementAtOrDefault(providerIndex);
-        if (provider == null || string.IsNullOrEmpty(provider.BaseUrl))
+        var (baseUrl, apiUser, apiPass) = ResolveDispatcharrTestTarget(
+            request,
+            config.Providers.ElementAtOrDefault(providerIndex));
+
+        // Checked against the URL the call will actually go to rather than the Xtream field, so a
+        // provider that has only a Dispatcharr URL is no longer refused for missing something the
+        // test does not need.
+        if (string.IsNullOrEmpty(baseUrl))
         {
             return Ok(new { Success = false, Message = "Please configure Base URL first." });
         }
 
-        if (string.IsNullOrEmpty(provider.DispatcharrApiUser))
+        if (string.IsNullOrEmpty(apiUser))
         {
             return Ok(new { Success = false, Message = "Please enter Dispatcharr API credentials." });
         }
 
         try
         {
-            _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
-            var success = await _dispatcharrClient.TestConnectionAsync(provider.EffectiveDispatcharrBaseUrl, cancellationToken).ConfigureAwait(false);
+            _dispatcharrClient.Configure(apiUser, apiPass);
+            var success = await _dispatcharrClient.TestConnectionAsync(baseUrl, cancellationToken).ConfigureAwait(false);
 
             if (success)
             {
@@ -326,6 +343,39 @@ public class SyncController : ControllerBase
             _logger.LogError(ex, "Dispatcharr connection test failed");
             return Ok(new { Success = false, Message = $"Connection failed: {ex.Message}" });
         }
+    }
+
+    /// <summary>
+    /// The Dispatcharr credentials a test should actually use: what the form sent, falling back to
+    /// what is saved (GitHub #114).
+    /// </summary>
+    /// <param name="request">The typed values, or <c>null</c> when the caller sent no body.</param>
+    /// <param name="saved">The stored provider, or <c>null</c> when none is stored yet.</param>
+    /// <returns>The base URL to call and the credentials to call it with.</returns>
+    internal static (string BaseUrl, string ApiUser, string ApiPass) ResolveDispatcharrTestTarget(
+        DispatcharrTestRequest? request,
+        ProviderConfig? saved)
+    {
+        var provider = saved ?? new ProviderConfig();
+
+        // null and empty mean different things here, so this is deliberately ?? and not a
+        // string.IsNullOrEmpty check. null is a field the caller never sent, which is the only
+        // state that should read the saved value. Empty is a field the user cleared, and for the
+        // Dispatcharr URL that is a real instruction: it asks for the Xtream host. Treating it as
+        // "unset" would quietly restore the URL the user just deleted and test that instead.
+        var target = new ProviderConfig
+        {
+            BaseUrl = request?.BaseUrl ?? provider.BaseUrl,
+            DispatcharrBaseUrl = request?.DispatcharrBaseUrl ?? provider.DispatcharrBaseUrl,
+        };
+
+        // Through ProviderConfig rather than reimplemented, so "empty means the Xtream host" and
+        // the trailing-slash handling cannot come to mean one thing when testing and another when
+        // syncing (GitHub #83).
+        return (
+            target.EffectiveDispatcharrBaseUrl,
+            request?.ApiUser ?? provider.DispatcharrApiUser,
+            request?.ApiPass ?? provider.DispatcharrApiPass);
     }
 
     /// <summary>
@@ -994,6 +1044,37 @@ public class ConnectionTestRequest
     /// Gets or sets the password to test.
     /// </summary>
     public string? Password { get; set; }
+}
+
+/// <summary>
+/// The Dispatcharr credentials to test, as typed into the configuration form (GitHub #114).
+/// <para>
+/// Every property is nullable on purpose. <c>null</c> means the caller sent no such field and the
+/// saved value should be used; an empty string means the user cleared the field, which for
+/// <see cref="DispatcharrBaseUrl"/> is a request to use the Xtream host instead.
+/// </para>
+/// </summary>
+public class DispatcharrTestRequest
+{
+    /// <summary>
+    /// Gets or sets the Dispatcharr URL to test. Empty means the same host as <see cref="BaseUrl"/>.
+    /// </summary>
+    public string? DispatcharrBaseUrl { get; set; }
+
+    /// <summary>
+    /// Gets or sets the Xtream base URL, which is where an empty Dispatcharr URL points.
+    /// </summary>
+    public string? BaseUrl { get; set; }
+
+    /// <summary>
+    /// Gets or sets the Dispatcharr REST API username to test.
+    /// </summary>
+    public string? ApiUser { get; set; }
+
+    /// <summary>
+    /// Gets or sets the Dispatcharr REST API password to test.
+    /// </summary>
+    public string? ApiPass { get; set; }
 }
 
 /// <summary>
