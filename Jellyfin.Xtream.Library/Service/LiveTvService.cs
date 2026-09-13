@@ -879,7 +879,7 @@ public class LiveTvService : IDisposable
             // Add catch-up attributes if enabled and channel supports it
             if (config.EnableCatchup && channel.TvArchive && channel.TvArchiveDuration > 0)
             {
-                var catchupDays = Math.Min(config.CatchupDays, channel.TvArchiveDuration);
+                var catchupDays = CatchupPlanner.DayCount(config.CatchupDays, channel.TvArchiveDuration);
                 extinf.Append(" catchup=\"default\"");
                 extinf.Append(CultureInfo.InvariantCulture, $" catchup-days=\"{catchupDays}\"");
 
@@ -909,13 +909,11 @@ public class LiveTvService : IDisposable
 
     private static string BuildCatchupUrl(PluginConfiguration config, LiveStreamInfo channel)
     {
-        // Xtream timeshift URL format
-        // {utc} = unix timestamp of requested time
-        // {start} = program start timestamp
-        // {end} = program end timestamp
-        // {duration} = duration in seconds
+        // The template external IPTV clients fill in themselves. {duration} is whole minutes, not
+        // seconds as the comment here used to say. Shares one definition with the URL the plugin
+        // plays itself, so the two cannot drift apart against the same provider (GitHub #108).
         var (baseUrl, username, password) = ResolveLiveTvProvider(config, channel.ProviderIndex);
-        return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/timeshift/{username}/{password}/{{duration}}/{{start}}/{channel.StreamId}.ts");
+        return CatchupUrlBuilder.BuildTemplate(baseUrl, username, password, channel.StreamId);
     }
 
     // Resolves credentials for the Live TV provider. Reads Providers[0] when populated
