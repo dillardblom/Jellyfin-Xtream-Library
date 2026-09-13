@@ -126,6 +126,7 @@ var XtreamLibraryConfig = (function () {
         if (!p) return;
         this.activeProviderIndex = index;
 
+        document.getElementById('txtName').value = p.Name || '';
         document.getElementById('txtBaseUrl').value = p.BaseUrl || '';
         document.getElementById('txtUsername').value = p.Username || '';
         document.getElementById('txtPassword').value = p.Password || '';
@@ -206,6 +207,7 @@ var XtreamLibraryConfig = (function () {
         var p = this.providers[this.activeProviderIndex];
         if (!p) return;
 
+        p.Name = document.getElementById('txtName').value.trim();
         p.BaseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
         p.Username = document.getElementById('txtUsername').value.trim();
         p.Password = document.getElementById('txtPassword').value.trim();
@@ -736,19 +738,76 @@ var XtreamLibraryConfig = (function () {
         });
     },
 
+    /**
+     * GitHub #100. What is wrong with a Base URL, in words, or null when nothing is.
+     *
+     * Returns { fatal, message }. Reporting the browser's own exception is no use here: its
+     * message is the string "Invalid URL" and nothing else, whatever went wrong. What identifies
+     * the problem is the value it choked on, because the things that actually reach this field are
+     * invisible on screen. A zero-width space pasted out of a web page, a Cyrillic character that
+     * looks Latin, a full-width colon. Two of those three do not even throw: the host quietly
+     * becomes something else, and the connection then fails against a name nobody typed. So the
+     * host is compared before and after parsing as well, and that one is not fatal, because a
+     * genuine international domain name reaches the same branch and must stay testable.
+     *
+     * @param {string} value The Base URL as typed, already trimmed.
+     * @returns {?{fatal: boolean, message: string}} The problem, or null.
+     */
+    describeBaseUrlProblem: function (value) {
+        if (!value) {
+            return { fatal: true, message: 'Enter a Base URL, including the protocol: http:// or https://' };
+        }
+
+        var parsed;
+        try {
+            parsed = new URL(value);
+        } catch (e) {
+            var detail = (e && e.message) ? e.message : 'no detail from the browser';
+            return {
+                fatal: true,
+                message: 'Could not read "' + value + '" as a URL (' + detail
+                    + '). Check for a stray space or a character copied in from a web page.',
+            };
+        }
+
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return {
+                fatal: true,
+                message: 'Base URL has to start with http:// or https://. "' + value + '" was read as "'
+                    + parsed.protocol.replace(/:$/, '') + '".',
+            };
+        }
+
+        var typedAuthority = value.replace(/^[^:]+:\/\//, '').split(/[/?#]/)[0];
+        var typedHost = typedAuthority.split('@').pop().replace(/:\d*$/, '').toLowerCase();
+        if (typedHost && typedHost !== parsed.hostname) {
+            return {
+                fatal: false,
+                message: 'Note: the host reads as "' + parsed.hostname + '", not "' + typedHost
+                    + '" as typed. If that is not an international domain name you meant to use, retype the host by hand.',
+            };
+        }
+
+        return null;
+    },
+
     testConnection: function () {
+        const self = this;
         const statusSpan = document.getElementById('connectionStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Testing...</span>';
 
         const baseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
 
-        // Validate URL format
-        try {
-            new URL(baseUrl);
-        } catch (e) {
-            statusSpan.innerHTML = '<span style="color: red;">Invalid URL format. Must include protocol (http:// or https://)</span>';
+        // GitHub #100. A problem worth stopping for is reported instead of the test; one that only
+        // might be a problem rides along with the failure message, so a deliberate international
+        // domain name is not blocked from being tested.
+        const urlProblem = this.describeBaseUrlProblem(baseUrl);
+        if (urlProblem && urlProblem.fatal) {
+            statusSpan.innerHTML = '<span style="color: red;">' + this.escapeHtml(urlProblem.message) + '</span>';
             return;
         }
+
+        const hostNote = urlProblem ? ' ' + urlProblem.message : '';
 
         const credentials = {
             BaseUrl: baseUrl,
@@ -767,13 +826,15 @@ var XtreamLibraryConfig = (function () {
             return response.json();
         }).then(function (data) {
             if (data.Success) {
-                statusSpan.innerHTML = '<span style="color: green;">' + data.Message + '</span>';
+                statusSpan.innerHTML = '<span style="color: green;">' + self.escapeHtml(data.Message) + '</span>';
             } else {
-                statusSpan.innerHTML = '<span style="color: red;">' + data.Message + '</span>';
+                statusSpan.innerHTML = '<span style="color: red;">' + self.escapeHtml(data.Message + hostNote) + '</span>';
             }
         }).catch(function (error) {
             console.error('TestConnection error:', error);
-            statusSpan.innerHTML = '<span style="color: red;">Connection failed: ' + (error.message || 'Check console for details') + '</span>';
+            statusSpan.innerHTML = '<span style="color: red;">'
+                + self.escapeHtml('Connection failed: ' + (error.message || 'Check console for details') + hostNote)
+                + '</span>';
         });
     },
 
@@ -2746,6 +2807,20 @@ function initXtreamLibraryConfig() {
             XtreamLibraryConfig.updateActiveProviderFromUI();
             var newIndex = parseInt(this.value);
             XtreamLibraryConfig.loadProviderIntoUI(newIndex);
+        });
+    }
+
+    // GitHub #99. Renaming redraws the dropdown as you type, so the label you are about to pick
+    // from is the one you just typed. activeProviderIndex is read inside the handler rather than
+    // captured here: a keystroke landing while the dropdown is switching would otherwise write the
+    // name onto whichever provider happened to be active when the page loaded.
+    var txtName = document.getElementById('txtName');
+    if (txtName) {
+        txtName.addEventListener('input', function () {
+            var p = XtreamLibraryConfig.providers[XtreamLibraryConfig.activeProviderIndex];
+            if (!p) return;
+            p.Name = this.value.trim();
+            XtreamLibraryConfig.renderProviderSelector();
         });
     }
 
