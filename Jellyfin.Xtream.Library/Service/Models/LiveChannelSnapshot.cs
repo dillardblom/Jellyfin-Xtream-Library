@@ -156,6 +156,7 @@ public class LiveChannelSnapshot
                 Name = entry.Name,
                 EpgChannelId = entry.EpgChannelId,
                 StreamIcon = entry.StreamIcon,
+                StreamType = entry.StreamType,
                 Num = entry.Num,
                 Tags = entry.Tags,
                 CategoryId = entry.CategoryId,
@@ -266,6 +267,18 @@ public class LiveChannelSnapshotEntry
     public string StreamIcon { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the provider's <c>stream_type</c>.
+    /// <para>
+    /// Kept because the M3U is often rendered straight from this snapshot rather than from a fresh
+    /// fetch. Without it a radio channel would be flagged as radio only on the runs that went to
+    /// the provider, and silently be television on the runs served from here (GitHub #112). Empty
+    /// in a snapshot written before this was recorded, which reads as television, matching the
+    /// behaviour of every earlier version.
+    /// </para>
+    /// </summary>
+    public string StreamType { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets the channel number from the provider.
     /// </summary>
     public int Num { get; set; }
@@ -336,6 +349,7 @@ public class LiveChannelSnapshotEntry
             Name = channel.Name ?? string.Empty,
             EpgChannelId = channel.EpgChannelId ?? string.Empty,
             StreamIcon = channel.StreamIcon ?? string.Empty,
+            StreamType = channel.StreamType ?? string.Empty,
             Num = channel.Num,
             Tags = channel.Tags,
             Checksum = ComputeChecksum(channel),

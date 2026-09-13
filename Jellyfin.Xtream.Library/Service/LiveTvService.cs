@@ -915,6 +915,16 @@ public class LiveTvService : IDisposable
                 extinf.Append(CultureInfo.InvariantCulture, $" group-title=\"{EscapeAttribute(categoryName)}\"");
             }
 
+            // GitHub #112. Kodi's PVR IPTV Simple Client and several other M3U players read this to
+            // file a channel under Radio instead of TV. Emitted only for a stream_type the provider
+            // is known to use for radio, never guessed: stream_type is also where providers put
+            // their own bookkeeping, and a mislabelled television channel is harder to find than a
+            // radio station sitting in the TV list.
+            if (LiveStreamKind.IsRadio(channel.StreamType))
+            {
+                extinf.Append(" radio=\"true\"");
+            }
+
             // Add catch-up attributes if enabled and channel supports it
             if (config.EnableCatchup && channel.TvArchive && channel.TvArchiveDuration > 0)
             {

@@ -410,6 +410,70 @@ public class LiveTvServiceTests
         return config;
     }
 
+    // GitHub #112. stream_type reached the models and stopped there, so a radio station was
+    // published as a television channel in the M3U and in the native tuner alike.
+
+    [Fact]
+    public void GenerateM3U_RadioChannel_EmitsRadioAttribute()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Radio 1", Num = 1, StreamType = "radio_streams" },
+        };
+
+        LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>())
+            .Should().Contain("radio=\"true\"");
+    }
+
+    [Fact]
+    public void GenerateM3U_TelevisionChannel_DoesNotEmitRadioAttribute()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, StreamType = "live" },
+        };
+
+        LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>())
+            .Should().NotContain("radio=");
+    }
+
+    [Fact]
+    public void GenerateM3U_UnknownStreamType_IsNotTreatedAsRadio()
+    {
+        // One provider uses created_live across Kids, Movies and Sports. Guessing from anything
+        // other than the confirmed value would move real television out of the TV list.
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Kids Channel", Num = 1, StreamType = "created_live" },
+        };
+
+        LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>())
+            .Should().NotContain("radio=");
+    }
+
+    [Fact]
+    public void GenerateM3U_RadioFlagSurvivesASnapshotRoundTrip()
+    {
+        // The M3U is usually rendered from the snapshot rather than a fresh fetch, so a flag that
+        // only exists on the live object would come and go between runs.
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Radio 1", Num = 1, StreamType = "radio_streams" },
+        };
+        var config = MakeM3UConfig();
+
+        var direct = LiveTvService.GenerateM3U(channels, config, catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+        var restored = LiveTvService.GenerateM3U(
+            LiveChannelSnapshot.FromChannels(channels).ToChannels(),
+            config,
+            catchupOnly: false,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        restored.Should().Be(direct);
+        restored.Should().Contain("radio=\"true\"");
+    }
+
     [Fact]
     public void GenerateM3U_ChannelWithKnownCategory_EmitsGroupTitle()
     {
