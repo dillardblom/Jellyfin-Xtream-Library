@@ -305,29 +305,30 @@ public class XtreamTunerHostTests : IDisposable
         source.Path.Should().Contain("/live/testuser/testpass/100.m3u8");
     }
 
+    // GitHub #107. The placeholders that used to live here carried index 0 and 1, which is exactly
+    // what makes Jellyfin skip the probe (MediaSourceManager:522), so the codec stayed unknown and
+    // clients rejected streams they could have played.
+
     [Fact]
-    public async Task GetChannelStreamMediaSources_WithoutStats_HasDefaultVideoAndAudioStreams()
+    public async Task GetChannelStreamMediaSources_WithoutStats_LeavesMediaStreamsEmptyAndRequiresOpening()
     {
         var config = Plugin.Instance.Configuration;
         config.BaseUrl = "http://test.example.com";
-        config.Username = "testuser";
-        config.Password = "testpass";
+        config.Username = "user";
+        config.Password = "pass";
 
         var result = await _tunerHost.GetChannelStreamMediaSources("xtream_100", CancellationToken.None);
 
         var source = result[0];
-        source.MediaStreams.Should().HaveCount(2);
 
-        var video = source.MediaStreams[0];
-        video.Type.Should().Be(MediaStreamType.Video);
-        video.Index.Should().Be(0);
-        video.IsInterlaced.Should().BeFalse();
-        video.Codec.Should().BeNull();
+        // Empty, not "some harmless default": any entry with an index other than -1 suppresses the
+        // probe. Jellyfin fills in its own index -1 entries afterwards.
+        source.MediaStreams.Should().BeEmpty();
+        source.SupportsProbing.Should().BeTrue();
 
-        var audio = source.MediaStreams[1];
-        audio.Type.Should().Be(MediaStreamType.Audio);
-        audio.Index.Should().Be(1);
-        audio.Codec.Should().BeNull();
+        // Without this, PlaybackInfo never opens the source, so the probe is unreachable whatever
+        // SupportsProbing says.
+        source.RequiresOpening.Should().BeTrue();
     }
 
     [Fact]
@@ -370,6 +371,10 @@ public class XtreamTunerHostTests : IDisposable
 
         var source = result[0];
         source.SupportsProbing.Should().BeFalse();
+
+        // A source that arrived with stats has nothing to find out, so it should not pay for an
+        // open either (GitHub #107).
+        source.RequiresOpening.Should().BeFalse();
         source.AnalyzeDurationMs.Should().Be(0);
 
         source.MediaStreams.Should().HaveCount(2);
