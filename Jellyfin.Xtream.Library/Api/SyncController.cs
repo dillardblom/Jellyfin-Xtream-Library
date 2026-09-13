@@ -33,6 +33,7 @@ using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Xtream.Library.Api;
@@ -286,11 +287,19 @@ public class SyncController : ControllerBase
     /// <param name="providerIndex">Zero-based provider index (default: 0).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Connection test result.</returns>
+    /// <remarks>
+    /// <see cref="EmptyBodyBehavior.Allow"/> is spelled out rather than left to be inferred from
+    /// the nullable annotation. Under <c>[ApiController]</c> a <c>[FromBody]</c> parameter rejects
+    /// an empty body with an automatic 400 unless something says otherwise, and what says
+    /// otherwise here is <c>&lt;Nullable&gt;</c> being enabled project-wide. A caller that sends no
+    /// body is meant to have the saved configuration tested, so that path should not rest on a
+    /// compiler setting that has nothing to do with it.
+    /// </remarks>
     [HttpPost("TestDispatcharr")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult> TestDispatcharr(
-        [FromBody] DispatcharrTestRequest? request,
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] DispatcharrTestRequest? request,
         [FromQuery] int providerIndex = 0,
         CancellationToken cancellationToken = default)
     {
