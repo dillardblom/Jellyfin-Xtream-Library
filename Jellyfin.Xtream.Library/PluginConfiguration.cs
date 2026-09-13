@@ -239,6 +239,27 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public int CatchupDays { get; set; } = 7;
 
+    /// <summary>
+    /// Gets or sets a value indicating whether finished programmes are browsable inside Jellyfin
+    /// (GitHub #108).
+    /// <para>
+    /// Separate from <see cref="EnableCatchup"/> on purpose. That one adds attributes to the M3U
+    /// for external IPTV clients and has been doing only that; letting it also add a navigation
+    /// entry would change what upgrading means for everyone who already has it on.
+    /// </para>
+    /// </summary>
+    public bool ShowCatchupInJellyfin { get; set; }
+
+    /// <summary>
+    /// Gets or sets a correction, in minutes, applied to the provider's catch-up clock.
+    /// <para>
+    /// The last resort when catch-up plays a programme from the wrong hour. The offset is normally
+    /// derived from what the provider reports about itself; this is what a user has when that
+    /// derivation is wrong, since nothing else about the symptom is actionable.
+    /// </para>
+    /// </summary>
+    public int CatchupTimeShiftMinutes { get; set; }
+
     // =====================
     // Legacy fields — kept for XML deserialization during migration only.
     // Read by MigrateConfigurationIfNeeded() in Plugin.cs.
@@ -407,6 +428,7 @@ public class PluginConfiguration : BasePluginConfiguration
         EpgCacheMinutes = Math.Max(EpgCacheMinutes, 1);
         EpgDaysToFetch = Math.Clamp(EpgDaysToFetch, 1, 14);
         CatchupDays = Math.Clamp(CatchupDays, 1, 30);
+        CatchupTimeShiftMinutes = Math.Clamp(CatchupTimeShiftMinutes, -720, 720);
 
         // Global: daily schedule
         SyncDailyHour = Math.Clamp(SyncDailyHour, 0, 23);

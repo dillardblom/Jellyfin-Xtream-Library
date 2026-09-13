@@ -17,6 +17,7 @@ using Jellyfin.Xtream.Library.Client;
 using Jellyfin.Xtream.Library.Service;
 using Jellyfin.Xtream.Library.Tasks;
 using MediaBrowser.Controller;
+using MediaBrowser.Controller.Channels;
 using MediaBrowser.Controller.LiveTv;
 using MediaBrowser.Controller.Plugins;
 using MediaBrowser.Model.Tasks;
@@ -42,6 +43,12 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         serviceCollection.AddSingleton<StrmSyncService>();
         serviceCollection.AddSingleton<LiveTvService>();
         serviceCollection.AddSingleton<ITunerHost, XtreamTunerHost>();
+        serviceCollection.AddSingleton<CatchupEpgCache>();
+
+        // Registered whatever the settings say, and gated at runtime in IsEnabledFor. Skipping the
+        // registration instead would have Jellyfin delete the channel and everything under it on
+        // the next scan, taking watched state with it (GitHub #108).
+        serviceCollection.AddSingleton<IChannel, XtreamCatchupChannel>();
         serviceCollection.AddSingleton<IScheduledTask, SyncLibraryTask>();
         serviceCollection.AddHostedService<Service.BetaChannelManager>();
     }

@@ -639,6 +639,45 @@ public class LiveTvService : IDisposable
         }
     }
 
+    /// <summary>
+    /// The catch-up capable channels, preferring the stored snapshot over asking the provider
+    /// (GitHub #108).
+    /// <para>
+    /// Browsing hits this on every screen, and a provider fetch per screen is not something a
+    /// browse can afford. The snapshot is the same one the M3U path already trusts, including its
+    /// provider fingerprint check: <c>ProviderIndex</c> is positional, so a reordered provider list
+    /// would otherwise build catch-up URLs with another provider's credentials.
+    /// </para>
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Channels the provider keeps an archive for.</returns>
+    internal async Task<IReadOnlyList<LiveStreamInfo>> GetCatchupCapableChannelsAsync(CancellationToken cancellationToken)
+    {
+        var config = Plugin.Instance.Configuration;
+
+        List<LiveStreamInfo>? channels = null;
+        try
+        {
+            var snapshot = await LoadChannelSnapshotAsync(cancellationToken).ConfigureAwait(false);
+            var stored = snapshot?.ToChannels();
+            if (stored is { Count: > 0 } && snapshot!.MatchesProviders(BuildProviderFingerprints(config)))
+            {
+                channels = ApplyRenderTimeFilters(stored, config);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read the Live TV channel snapshot for catch-up; asking the provider");
+        }
+
+        channels ??= await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
+        return CatchupPlanner.CatchupChannels(channels);
+    }
+
     internal async Task<List<LiveStreamInfo>> GetFilteredChannelsAsync(CancellationToken cancellationToken)
     {
         var config = Plugin.Instance.Configuration;
@@ -1288,7 +1327,7 @@ public class LiveTvService : IDisposable
             .Replace("'", "&apos;", StringComparison.Ordinal);
     }
 
-    private static string DecodeBase64(string value)
+    internal static string DecodeBase64(string value)
     {
         if (string.IsNullOrEmpty(value))
         {
