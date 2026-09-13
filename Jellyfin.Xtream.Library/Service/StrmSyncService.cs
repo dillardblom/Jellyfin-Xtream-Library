@@ -425,6 +425,75 @@ public partial class StrmSyncService
         _logger.LogInformation("Retry successful for movie: {MovieName}", item.Name);
     }
 
+    /// <summary>
+    /// Gets advanced movie metadata (plot, rating, genre, etc). When Dispatcharr Mode is on,
+    /// tries Dispatcharr's own provider-info endpoint first - same 24h-refresh-if-stale
+    /// behaviour as the classic Xtream call, but without the Xtream-compatibility layer's
+    /// round trip. Falls back to the classic call if Dispatcharr Mode is off, or if the
+    /// Dispatcharr call fails (older Dispatcharr instance, transient error, etc).
+    /// </summary>
+    /// <param name="provider">The provider config, used for EffectiveDispatcharrBaseUrl.</param>
+    /// <param name="connectionInfo">Connection info for the classic Xtream fallback call.</param>
+    /// <param name="enableDispatcharrMode">Whether Dispatcharr Mode is on for this provider.</param>
+    /// <param name="streamId">The movie's Xtream/Dispatcharr stream ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The movie's advanced info, or null if both sources failed.</returns>
+    internal async Task<VodInfoResponse?> GetMovieAdvancedInfoAsync(
+        ProviderConfig provider,
+        ConnectionInfo connectionInfo,
+        bool enableDispatcharrMode,
+        int streamId,
+        CancellationToken cancellationToken)
+    {
+        if (enableDispatcharrMode)
+        {
+            var restInfo = await _dispatcharrClient.GetMovieProviderInfoAsync(provider.EffectiveDispatcharrBaseUrl, streamId, cancellationToken).ConfigureAwait(false);
+            if (restInfo != null)
+            {
+                return restInfo;
+            }
+        }
+
+        return await _client.GetVodInfoAsync(connectionInfo, streamId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Gets series metadata and its episode list. Same Dispatcharr-Mode-first, classic-fallback
+    /// shape as <see cref="GetMovieAdvancedInfoAsync"/>. The Dispatcharr path needs two calls
+    /// (series metadata, then episodes) since Dispatcharr's own provider-info response nests an
+    /// episode list that lacks the per-provider stream_id needed to build a playable STRM URL.
+    /// Falls back to the single classic call as a whole if either Dispatcharr call comes back
+    /// empty, rather than mixing metadata from one source with episodes from the other.
+    /// </summary>
+    /// <param name="provider">The provider config, used for EffectiveDispatcharrBaseUrl.</param>
+    /// <param name="connectionInfo">Connection info for the classic Xtream fallback call.</param>
+    /// <param name="enableDispatcharrMode">Whether Dispatcharr Mode is on for this provider.</param>
+    /// <param name="seriesId">The series' Xtream/Dispatcharr series ID.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The series' metadata and episode list.</returns>
+    internal async Task<SeriesStreamInfo> GetSeriesAdvancedInfoAsync(
+        ProviderConfig provider,
+        ConnectionInfo connectionInfo,
+        bool enableDispatcharrMode,
+        int seriesId,
+        CancellationToken cancellationToken)
+    {
+        if (enableDispatcharrMode)
+        {
+            var info = await _dispatcharrClient.GetSeriesProviderInfoAsync(provider.EffectiveDispatcharrBaseUrl, seriesId, cancellationToken).ConfigureAwait(false);
+            if (info != null)
+            {
+                var episodes = await _dispatcharrClient.GetSeriesEpisodesAsync(provider.EffectiveDispatcharrBaseUrl, seriesId, cancellationToken).ConfigureAwait(false);
+                if (episodes.Count > 0)
+                {
+                    return new SeriesStreamInfo { Info = info, Episodes = episodes };
+                }
+            }
+        }
+
+        return await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, seriesId, cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task RetrySingleSeriesAsync(
         ProviderConfig provider,
         string seriesPath,
@@ -433,7 +502,14 @@ public partial class StrmSyncService
         CancellationToken cancellationToken)
     {
         var connectionInfo = new ConnectionInfo(provider.BaseUrl, provider.Username, provider.Password);
-        var seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, item.ItemId, cancellationToken).ConfigureAwait(false);
+        var enableDispatcharrMode = provider.EnableDispatcharrMode && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
+        if (enableDispatcharrMode)
+        {
+            _dispatcharrClient.RequestDelayMs = provider.RequestDelayMs;
+            _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
+        }
+
+        var seriesInfo = await GetSeriesAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, item.ItemId, cancellationToken).ConfigureAwait(false);
 
         if (seriesInfo.Episodes == null || seriesInfo.Episodes.Count == 0)
         {
@@ -1840,7 +1916,7 @@ public partial class StrmSyncService
                         {
                             try
                             {
-                                var info = await _client.GetVodInfoAsync(connectionInfo, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
+                                var info = await GetMovieAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, movieEntry.Stream.StreamId, ct).ConfigureAwait(false);
                                 vodInfoCache[movieEntry.Stream.StreamId] = info;
                             }
                             catch (Exception ex)
@@ -2033,7 +2109,7 @@ public partial class StrmSyncService
                             {
                                 try
                                 {
-                                    vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                                    vodInfo = await GetMovieAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, stream.StreamId, ct).ConfigureAwait(false);
                                 }
                                 catch (OperationCanceledException)
                                 {
@@ -2104,7 +2180,7 @@ public partial class StrmSyncService
                             {
                                 try
                                 {
-                                    vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct).ConfigureAwait(false);
+                                    vodInfo = await GetMovieAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, stream.StreamId, ct).ConfigureAwait(false);
                                 }
                                 catch (Exception ex)
                                 {
@@ -2302,7 +2378,7 @@ public partial class StrmSyncService
                                     // Reuse vodInfo if already fetched, otherwise fetch now
                                     if (vodInfo == null)
                                     {
-                                        vodInfo = await _client.GetVodInfoAsync(connectionInfo, stream.StreamId, ct)
+                                        vodInfo = await GetMovieAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, stream.StreamId, ct)
                                             .ConfigureAwait(false);
                                     }
 
@@ -2512,6 +2588,12 @@ public partial class StrmSyncService
         var globalConfig = Plugin.Instance.Configuration;
         var categories = await _client.GetSeriesCategoryAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
         var processedSeriesIds = new ConcurrentDictionary<int, bool>();
+        var enableDispatcharrMode = provider.EnableDispatcharrMode && !string.IsNullOrEmpty(provider.DispatcharrApiUser);
+        if (enableDispatcharrMode)
+        {
+            _dispatcharrClient.RequestDelayMs = provider.RequestDelayMs;
+            _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
+        }
 
         // Parse folder mappings (category ID → folder names) - only in Multiple folder mode.
         // This has to come before the category filter, because in Multiple folder mode the
@@ -2927,7 +3009,7 @@ public partial class StrmSyncService
                         {
                             try
                             {
-                                var info = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, seriesEntry.Series.SeriesId, ct).ConfigureAwait(false);
+                                var info = await GetSeriesAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, seriesEntry.Series.SeriesId, ct).ConfigureAwait(false);
                                 seriesInfoCache[seriesEntry.Series.SeriesId] = info;
                             }
                             catch (Exception ex)
@@ -3067,7 +3149,7 @@ public partial class StrmSyncService
                     }
                     else
                     {
-                        seriesInfo = await _client.GetSeriesStreamsBySeriesAsync(connectionInfo, series.SeriesId, ct).ConfigureAwait(false);
+                        seriesInfo = await GetSeriesAdvancedInfoAsync(provider, connectionInfo, enableDispatcharrMode, series.SeriesId, ct).ConfigureAwait(false);
                     }
 
                     // Track for snapshot building
