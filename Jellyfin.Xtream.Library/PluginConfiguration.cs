@@ -239,6 +239,37 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public int CatchupDays { get; set; } = 7;
 
+    /// <summary>
+    /// Gets or sets a value indicating whether finished programmes are browsable inside Jellyfin
+    /// (GitHub #108).
+    /// <para>
+    /// Separate from <see cref="EnableCatchup"/> on purpose. That one adds attributes to the M3U
+    /// for external IPTV clients and has been doing only that; letting it also add a navigation
+    /// entry would change what upgrading means for everyone who already has it on.
+    /// </para>
+    /// </summary>
+    public bool ShowCatchupInJellyfin { get; set; }
+
+    /// <summary>
+    /// Gets or sets a correction, in minutes, applied to the provider's catch-up clock.
+    /// <para>
+    /// The last resort when catch-up plays a programme from the wrong hour. The offset is normally
+    /// derived from what the provider reports about itself; this is what a user has when that
+    /// derivation is wrong, since nothing else about the symptom is actionable.
+    /// </para>
+    /// </summary>
+    public int CatchupTimeShiftMinutes { get; set; }
+
+    /// <summary>
+    /// Gets or sets the block length, in minutes, used when a channel has no guide.
+    /// <para>
+    /// Some providers only publish what is coming, never what has been, so there is nothing to
+    /// list for a day that has passed even though its archive plays. Blocks give those channels a
+    /// way in. Zero switches them off, leaving such days empty.
+    /// </para>
+    /// </summary>
+    public int CatchupBlockMinutes { get; set; } = 30;
+
     // =====================
     // Legacy fields — kept for XML deserialization during migration only.
     // Read by MigrateConfigurationIfNeeded() in Plugin.cs.
@@ -407,6 +438,8 @@ public class PluginConfiguration : BasePluginConfiguration
         EpgCacheMinutes = Math.Max(EpgCacheMinutes, 1);
         EpgDaysToFetch = Math.Clamp(EpgDaysToFetch, 1, 14);
         CatchupDays = Math.Clamp(CatchupDays, 1, 30);
+        CatchupTimeShiftMinutes = Math.Clamp(CatchupTimeShiftMinutes, -720, 720);
+        CatchupBlockMinutes = CatchupBlockMinutes <= 0 ? 0 : Math.Clamp(CatchupBlockMinutes, 5, 240);
 
         // Global: daily schedule
         SyncDailyHour = Math.Clamp(SyncDailyHour, 0, 23);

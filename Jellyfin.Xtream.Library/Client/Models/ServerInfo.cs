@@ -34,7 +34,13 @@ public class ServerInfo
     [JsonProperty("timezone")]
     public string Timezone { get; set; } = string.Empty;
 
+    // Named for what it holds, not for the JSON key. "timestamp_now" is UTC and "time_now" is the
+    // panel's own local rendering of the same instant; the pair is what tells us the provider's
+    // clock offset, which is what a timeshift request has to be expressed in (GitHub #108).
     [JsonConverter(typeof(UnixDateTimeConverter))]
     [JsonProperty("timestamp_now")]
-    public DateTime TimeNow { get; set; }
+    public DateTime ServerTimeUtc { get; set; }
+
+    [JsonProperty("time_now")]
+    public string ServerTimeLocalRaw { get; set; } = string.Empty;
 }
