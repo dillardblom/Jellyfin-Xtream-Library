@@ -289,6 +289,46 @@ Trigger manually from **Dashboard → Scheduled Tasks**.
 4. Go to Dashboard → Live TV and check that the tuner is detected
 5. Refresh the Live TV cache from plugin settings
 
+## Security Note: Credentials in STRM Files and Live TV URLs
+
+The Xtream Codes protocol requires the username and password to appear directly in every stream
+URL. There is no token or session form. Your Xtream credentials therefore end up in plaintext in
+two places:
+
+- The `.strm` files written under your library path
+- The `LiveTv.m3u` and `Catchup.m3u` output served by the plugin
+
+This is a property of the protocol, not a plugin defect, and the same is true of any Xtream-based
+tooling. Anything that can read those files (other containers sharing the volume, backup tools,
+indexers, users with shell access on the host) can harvest the credentials.
+
+**The Live TV endpoints are reachable without a Jellyfin login.** `LiveTv.m3u`, `Epg.xml`,
+`Catchup.m3u` and `ChannelLogo/{streamId}` are deliberately anonymous, because Jellyfin's own M3U
+tuner and XMLTV guide fetcher send no Jellyfin credentials when they call them. The practical
+consequence is that anyone who can reach one of those URLs gets your Xtream username and password,
+once per channel, with no login. The path is the same on every install of this plugin, and if your
+server is fronted by a real TLS certificate its hostname is already public in certificate
+transparency logs, so an unlisted URL is not a defence. **Treat these URLs as equivalent to your
+Xtream password.**
+
+**How to limit the exposure:**
+
+- **Do not expose the plugin's endpoints to the open internet.** If Jellyfin itself is public,
+  restrict `/XtreamLibrary/` at your reverse proxy to the addresses that actually need it.
+- **Prefer the native tuner over the M3U tuner.** With Enable Native Tuner the plugin hands
+  channels to Jellyfin internally and never publishes a playlist, so no credential-bearing URL is
+  served to an anonymous caller.
+- **Restrict filesystem permissions.** Make sure the library path is not readable by other users or
+  containers on the host.
+- **Use a dedicated provider account.** If your provider supports multiple credential sets per
+  subscription, use a separate one for Jellyfin so it can be rotated on its own.
+
+Dispatcharr's credential-free proxy URLs currently cover multi-provider VOD movies in this plugin,
+but **not** Live TV, so enabling Dispatcharr does not keep credentials out of the M3U today.
+Extending that routing to Live TV is tracked separately.
+
+---
+
 ## License
 
 This project is licensed under the GPL-3.0 License - see the LICENSE file for details.
