@@ -260,6 +260,16 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public int CatchupTimeShiftMinutes { get; set; }
 
+    /// <summary>
+    /// Gets or sets the block length, in minutes, used when a channel has no guide.
+    /// <para>
+    /// Some providers only publish what is coming, never what has been, so there is nothing to
+    /// list for a day that has passed even though its archive plays. Blocks give those channels a
+    /// way in. Zero switches them off, leaving such days empty.
+    /// </para>
+    /// </summary>
+    public int CatchupBlockMinutes { get; set; } = 30;
+
     // =====================
     // Legacy fields — kept for XML deserialization during migration only.
     // Read by MigrateConfigurationIfNeeded() in Plugin.cs.
@@ -429,6 +439,7 @@ public class PluginConfiguration : BasePluginConfiguration
         EpgDaysToFetch = Math.Clamp(EpgDaysToFetch, 1, 14);
         CatchupDays = Math.Clamp(CatchupDays, 1, 30);
         CatchupTimeShiftMinutes = Math.Clamp(CatchupTimeShiftMinutes, -720, 720);
+        CatchupBlockMinutes = CatchupBlockMinutes <= 0 ? 0 : Math.Clamp(CatchupBlockMinutes, 5, 240);
 
         // Global: daily schedule
         SyncDailyHour = Math.Clamp(SyncDailyHour, 0, 23);

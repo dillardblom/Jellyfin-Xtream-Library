@@ -30,6 +30,7 @@ const CATCHUP_IDS = [
     'txtCatchupDays',
     'chkShowCatchupInJellyfin',
     'txtCatchupTimeShiftMinutes',
+    'txtCatchupBlockMinutes',
 ];
 
 test('every catch-up control the script binds exists in the page', () => {

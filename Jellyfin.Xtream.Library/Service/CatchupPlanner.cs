@@ -137,6 +137,54 @@ public static class CatchupPlanner
         => DayWindowUtc(Math.Max(0, dayCount), zone, nowUtc).FromUtc;
 
     /// <summary>
+    /// Evenly sized blocks covering one day, for a channel whose provider sends no guide.
+    /// <para>
+    /// Measured against a real provider: its archive streams play fine while
+    /// <c>get_simple_data_table</c>, <c>get_short_epg</c> and <c>xmltv.php</c> all return only
+    /// programmes that have not aired yet. Nothing anywhere says what was on last night. Without
+    /// blocks the feature is a correct, permanently empty browser for anyone in that position,
+    /// and the archive it cannot show is sitting right there.
+    /// </para>
+    /// <para>
+    /// Only whole blocks that have already finished, so a block never promises a recording the
+    /// provider does not have yet, and nothing before the archive horizon.
+    /// </para>
+    /// </summary>
+    /// <param name="fromUtc">Window start, inclusive.</param>
+    /// <param name="toUtc">Window end, exclusive.</param>
+    /// <param name="nowUtc">The current instant.</param>
+    /// <param name="archiveHorizonUtc">Oldest instant the provider still serves.</param>
+    /// <param name="blockMinutes">Block length in minutes.</param>
+    /// <returns>Block start and end instants, oldest first.</returns>
+    public static IReadOnlyList<(DateTimeOffset FromUtc, DateTimeOffset ToUtc)> TimeBlocks(
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        DateTimeOffset nowUtc,
+        DateTimeOffset archiveHorizonUtc,
+        int blockMinutes)
+    {
+        var blocks = new List<(DateTimeOffset FromUtc, DateTimeOffset ToUtc)>();
+        if (blockMinutes <= 0 || toUtc <= fromUtc)
+        {
+            return blocks;
+        }
+
+        var length = TimeSpan.FromMinutes(blockMinutes);
+        for (var cursor = fromUtc; cursor < toUtc; cursor += length)
+        {
+            var end = cursor + length;
+            if (end > toUtc || end > nowUtc || cursor < archiveHorizonUtc)
+            {
+                continue;
+            }
+
+            blocks.Add((cursor, end));
+        }
+
+        return blocks;
+    }
+
+    /// <summary>
     /// Programme duration in whole minutes, which is the unit the Xtream timeshift endpoint takes.
     /// <para>
     /// Rounded up, never below one. A programme listed as shorter than a minute is a bad EPG entry

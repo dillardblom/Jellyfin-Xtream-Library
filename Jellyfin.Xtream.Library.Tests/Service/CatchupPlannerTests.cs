@@ -212,6 +212,63 @@ public class CatchupPlannerTests
         CatchupPlanner.ProgrammesInWindow(null, From, To, Now, Horizon).Should().BeEmpty();
     }
 
+    // ---- TimeBlocks ----
+
+    [Fact]
+    public void ADayWithNoGuideIsOfferedInBlocks()
+    {
+        // Measured against a real provider: the archive plays, but no endpoint says what aired.
+        var blocks = CatchupPlanner.TimeBlocks(From, To, Now, Horizon, 30);
+        blocks.Should().HaveCount(48);
+        blocks[0].FromUtc.Should().Be(From);
+        (blocks[0].ToUtc - blocks[0].FromUtc).Should().Be(TimeSpan.FromMinutes(30));
+    }
+
+    [Fact]
+    public void OnlyBlocksThatHaveFinishedAreOffered()
+    {
+        // Today, half past noon. A block covering this afternoon is not in the archive yet.
+        var today = DateTimeOffset.Parse("2026-07-15T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        var blocks = CatchupPlanner.TimeBlocks(today, today.AddDays(1), Now, Horizon, 60);
+
+        blocks.Should().HaveCount(12);
+        blocks[^1].ToUtc.Should().BeOnOrBefore(Now);
+    }
+
+    [Fact]
+    public void BlocksBeforeTheArchiveHorizonAreNotOffered()
+    {
+        var old = DateTimeOffset.Parse("2026-07-01T00:00:00Z", System.Globalization.CultureInfo.InvariantCulture);
+        CatchupPlanner.TimeBlocks(old, old.AddDays(1), Now, Horizon, 30).Should().BeEmpty();
+    }
+
+    [Fact]
+    public void APartialBlockAtTheEndOfTheWindowIsNotOffered()
+    {
+        // 50 does not divide 1440, so the last block would run past midnight into a day whose
+        // folder covers it already.
+        var blocks = CatchupPlanner.TimeBlocks(From, To, Now, Horizon, 50);
+        blocks[^1].ToUtc.Should().BeOnOrBefore(To);
+    }
+
+    [Fact]
+    public void BlocksAreContiguousAndOldestFirst()
+    {
+        var blocks = CatchupPlanner.TimeBlocks(From, To, Now, Horizon, 60);
+        for (int i = 1; i < blocks.Count; i++)
+        {
+            blocks[i].FromUtc.Should().Be(blocks[i - 1].ToUtc);
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-30)]
+    public void BlocksCanBeSwitchedOff(int blockMinutes)
+    {
+        CatchupPlanner.TimeBlocks(From, To, Now, Horizon, blockMinutes).Should().BeEmpty();
+    }
+
     // ---- DurationMinutes ----
 
     [Theory]

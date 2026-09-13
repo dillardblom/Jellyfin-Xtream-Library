@@ -1184,6 +1184,17 @@
                                 </div>
                             </div>
                             <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtCatchupBlockMinutes">Block Length When There Is No Guide (minutes)</label>
+                                <input is="emby-input" type="number" id="txtCatchupBlockMinutes" name="CatchupBlockMinutes"
+                                       min="0" max="240" step="5" />
+                                <div class="fieldDescription">
+                                    Some providers only publish what is coming, never what has been, so a day that has
+                                    passed has nothing to list even though its recording plays fine. For those channels
+                                    the day is offered in blocks instead, and you pick a time rather than a programme.
+                                    Set to 0 to leave such days empty.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtCatchupTimeShiftMinutes">Catch-up Time Correction (minutes)</label>
                                 <input is="emby-input" type="number" id="txtCatchupTimeShiftMinutes" name="CatchupTimeShiftMinutes"
                                        min="-720" max="720" step="15" />

@@ -244,6 +244,32 @@ public class XtreamCatchupChannel : IChannel, IDisableMediaSourceDisplay, IRequi
         SupportsTranscoding = true,
     };
 
+    private static ChannelItemInfo BuildItem(
+        CatchupItemRef reference,
+        DateTimeOffset startUtc,
+        DateTimeOffset stopUtc,
+        string name,
+        string? overview) => new()
+    {
+        Id = CatchupItemId.ForProgramme(
+            reference.ProviderIndex,
+            reference.StreamId,
+            startUtc.ToUnixTimeSeconds(),
+            stopUtc.ToUnixTimeSeconds()),
+        Name = name,
+        Overview = overview,
+        Type = ChannelItemType.Media,
+        ContentType = ChannelMediaContentType.TvExtra,
+        MediaType = ChannelMediaType.Video,
+
+        // Both of these matter. A true IsLiveStream makes Jellyfin discard RunTimeTicks, and
+        // without a runtime a client cannot draw a seek bar for something that has finished.
+        IsLiveStream = false,
+        RunTimeTicks = (stopUtc - startUtc).Ticks,
+        PremiereDate = startUtc.UtcDateTime,
+        DateCreated = startUtc.UtcDateTime,
+    };
+
     private static ChannelItemResult Empty()
         => new() { Items = Array.Empty<ChannelItemInfo>(), TotalRecordCount = 0 };
 
@@ -333,27 +359,45 @@ public class XtreamCatchupChannel : IChannel, IDisableMediaSourceDisplay, IRequi
         var items = selected.Select(programme =>
         {
             var startUtc = DateTimeOffset.FromUnixTimeSeconds(programme.StartTimestamp);
+            var stopUtc = DateTimeOffset.FromUnixTimeSeconds(programme.StopTimestamp);
             var localStart = TimeZoneInfo.ConvertTime(startUtc, zone);
             var title = LiveTvService.DecodeBase64(programme.Title);
 
-            return new ChannelItemInfo
-            {
-                Id = CatchupItemId.ForProgramme(
-                    reference.ProviderIndex, reference.StreamId, programme.StartTimestamp, programme.StopTimestamp),
-                Name = $"{localStart:HH:mm} {title}",
-                Overview = LiveTvService.DecodeBase64(programme.Description),
-                Type = ChannelItemType.Media,
-                ContentType = ChannelMediaContentType.TvExtra,
-                MediaType = ChannelMediaType.Video,
-
-                // Both of these matter. A true IsLiveStream makes Jellyfin discard RunTimeTicks,
-                // and without a runtime a client cannot draw a seek bar for a finished programme.
-                IsLiveStream = false,
-                RunTimeTicks = (programme.StopTimestamp - programme.StartTimestamp) * TimeSpan.TicksPerSecond,
-                PremiereDate = startUtc.UtcDateTime,
-                DateCreated = startUtc.UtcDateTime,
-            };
+            return BuildItem(
+                reference,
+                startUtc,
+                stopUtc,
+                $"{localStart:HH:mm} {title}",
+                LiveTvService.DecodeBase64(programme.Description));
         }).ToList();
+
+        if (items.Count == 0 && config.CatchupBlockMinutes > 0)
+        {
+            // The provider publishes only what is coming, so a day that has passed has nothing to
+            // list even though its archive plays. Offer the day in blocks instead of an empty
+            // folder: every stream URL is built from a time window anyway, so a block is as
+            // playable as a programme.
+            items = CatchupPlanner
+                .TimeBlocks(from, to, now, horizon, config.CatchupBlockMinutes)
+                .Select(block => BuildItem(
+                    reference,
+                    block.FromUtc,
+                    block.ToUtc,
+                    TimeZoneInfo.ConvertTime(block.FromUtc, zone).ToString("HH:mm", CultureInfo.CurrentCulture)
+                        + " - "
+                        + TimeZoneInfo.ConvertTime(block.ToUtc, zone).ToString("HH:mm", CultureInfo.CurrentCulture),
+                    null))
+                .ToList();
+
+            _logger.LogDebug(
+                "Catch-up channel {StreamId} day -{DaysAgo}: no guide, offering {Count} blocks of {Minutes} min",
+                reference.StreamId,
+                reference.DaysAgo,
+                items.Count,
+                config.CatchupBlockMinutes);
+
+            return new ChannelItemResult { Items = items, TotalRecordCount = items.Count };
+        }
 
         _logger.LogDebug(
             "Catch-up channel {StreamId} day -{DaysAgo}: {Count} programmes of {Total} in the guide",
