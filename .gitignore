@@ -72,3 +72,4 @@ BUGS.md
 # Internal planning / spec drafts — kept local, not published
 docs/plans/
 docs/superpowers/
+.gstack/

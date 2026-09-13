@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "plugin_playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest", "--browser", "chromium"]
+    }
+  }
+}

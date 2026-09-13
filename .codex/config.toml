@@ -1,0 +1,9 @@
+sandbox_mode = "workspace-write"
+
+[mcp_servers.plugin_playwright]
+args = [
+    "@playwright/mcp@latest",
+    "--browser",
+    "chromium",
+]
+command = "npx"
