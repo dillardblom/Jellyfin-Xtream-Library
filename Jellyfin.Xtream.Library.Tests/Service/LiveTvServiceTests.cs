@@ -590,6 +590,194 @@ public class LiveTvServiceTests
         LiveTvService.CountCredentialBearingChannels(null).Should().Be(0);
     }
 
+    // GitHub #115. The last lines carrying the password after #113 were all catchup-source, a
+    // template an external client fills in and plays itself. Dispatcharr's /proxy/catchup/{uuid}
+    // answers 401 to an anonymous caller where /proxy/ts/stream/{uuid} answers 404, measured
+    // against 0.30.0, so there is no credential-free template to put there instead.
+
+    private static List<LiveStreamInfo> MakeArchiveChannel(string uuid) => new()
+    {
+        new()
+        {
+            StreamId = 1,
+            Name = "Channel 1",
+            Num = 1,
+            TvArchive = true,
+            TvArchiveDuration = 3,
+            DispatcharrUuid = uuid,
+        },
+    };
+
+    private static PluginConfiguration MakeCatchupDispatcharrConfig(bool optIn = false)
+    {
+        var config = MakeDispatcharrConfig();
+        config.EnableCatchup = true;
+        config.EmitCredentialedCatchupSource = optIn;
+        return config;
+    }
+
+    [Fact]
+    public void GenerateM3U_MatchedChannelWithArchive_LeavesTheCatchupTemplateOut()
+    {
+        var m3u = LiveTvService.GenerateM3U(
+            MakeArchiveChannel("uuid-one"),
+            MakeCatchupDispatcharrConfig(),
+            catchupOnly: false,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        m3u.Should().NotContain("catchup-source");
+        m3u.Should().NotContain("s3cr3t", "a playlist anyone can fetch must not carry the provider password");
+        m3u.Should().Contain("/proxy/ts/stream/uuid-one");
+
+        // catchup="default" without a source tells the client to build the URL from the stream URL,
+        // which is the proxy form and has no archive behind it. All three attributes go together.
+        m3u.Should().NotContain("catchup=");
+        m3u.Should().NotContain("catchup-days");
+    }
+
+    [Fact]
+    public void GenerateM3U_UnmatchedChannelWithArchive_KeepsItsCatchupTemplate()
+    {
+        // This line kept its Xtream stream URL in #113, so it already carries the password.
+        // Taking its catch-up away as well would cost a working feature and remove nothing.
+        var m3u = LiveTvService.GenerateM3U(
+            MakeArchiveChannel(string.Empty),
+            MakeCatchupDispatcharrConfig(),
+            catchupOnly: false,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        m3u.Should().Contain("catchup-source=");
+        m3u.Should().Contain("/timeshift/multiuser/s3cr3t/");
+    }
+
+    [Fact]
+    public void GenerateM3U_WithTheOptIn_MatchedChannelGetsItsTemplateBack()
+    {
+        var m3u = LiveTvService.GenerateM3U(
+            MakeArchiveChannel("uuid-one"),
+            MakeCatchupDispatcharrConfig(optIn: true),
+            catchupOnly: false,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        m3u.Should().Contain("catchup-source=");
+        m3u.Should().Contain("catchup=\"default\"");
+
+        // The stream URL stays credential free; only the template the user asked for carries them.
+        m3u.Should().Contain("/proxy/ts/stream/uuid-one");
+    }
+
+    [Fact]
+    public void GenerateM3U_WithoutDispatcharr_CatchupIsUnchangedFromBefore()
+    {
+        // Nothing about this may alter the output for someone not using Dispatcharr, and with no
+        // uuid on any channel that is what falls out.
+        var config = MakeM3UConfig();
+        config.EnableCatchup = true;
+
+        var m3u = LiveTvService.GenerateM3U(
+            MakeArchiveChannel(string.Empty),
+            config,
+            catchupOnly: false,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        m3u.Should().Contain("catchup-source=");
+        m3u.Should().Contain("catchup-days=\"3\"");
+    }
+
+    [Fact]
+    public void GenerateM3U_CatchupPlaylist_StillListsTheChannelWithoutATemplate()
+    {
+        // The cost of this change, pinned rather than left implicit: Catchup.m3u keeps listing the
+        // channel, with a credential-free stream URL and nothing telling a client about the archive.
+        var m3u = LiveTvService.GenerateM3U(
+            MakeArchiveChannel("uuid-one"),
+            MakeCatchupDispatcharrConfig(),
+            catchupOnly: true,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        m3u.Should().Contain("Channel 1");
+        m3u.Should().Contain("/proxy/ts/stream/uuid-one");
+        m3u.Should().NotContain("catchup-source");
+    }
+
+    [Fact]
+    public void GenerateM3U_TheCatchupDecisionSurvivesASnapshotRoundTrip()
+    {
+        // The M3U normally comes from the snapshot, so a decision made from fields that do not
+        // persist would alternate between runs with nothing to explain it. Same trap as #112.
+        var channels = MakeArchiveChannel("uuid-one");
+        var config = MakeCatchupDispatcharrConfig();
+
+        var direct = LiveTvService.GenerateM3U(channels, config, catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+        var restored = LiveTvService.GenerateM3U(
+            LiveChannelSnapshot.FromChannels(channels).ToChannels(),
+            config,
+            catchupOnly: false,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        restored.Should().Be(direct);
+        restored.Should().NotContain("catchup-source");
+    }
+
+    [Fact]
+    public void ShouldEmitCatchupSource_OptInOverridesEverything()
+    {
+        var matched = MakeArchiveChannel("uuid-one")[0];
+        var unmatched = MakeArchiveChannel(string.Empty)[0];
+
+        LiveTvService.ShouldEmitCatchupSource(MakeCatchupDispatcharrConfig(), matched).Should().BeFalse();
+        LiveTvService.ShouldEmitCatchupSource(MakeCatchupDispatcharrConfig(), unmatched).Should().BeTrue();
+        LiveTvService.ShouldEmitCatchupSource(MakeCatchupDispatcharrConfig(optIn: true), matched).Should().BeTrue();
+        LiveTvService.ShouldEmitCatchupSource(MakeCatchupDispatcharrConfig(optIn: true), unmatched).Should().BeTrue();
+    }
+
+    [Fact]
+    public void CountCredentialedCatchupChannels_CountsOnlyWhatTheOptInPutBack()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, DispatcharrUuid = "uuid-one", TvArchive = true, TvArchiveDuration = 3 },
+            new() { StreamId = 2, DispatcharrUuid = "uuid-two", TvArchive = true, TvArchiveDuration = 3 },
+
+            // No archive, so no template either way.
+            new() { StreamId = 3, DispatcharrUuid = "uuid-three" },
+
+            // Unmatched: its stream URL already carries the credentials, so it is the other count's.
+            new() { StreamId = 4, TvArchive = true, TvArchiveDuration = 3 },
+        };
+
+        LiveTvService.CountCredentialedCatchupChannels(MakeCatchupDispatcharrConfig(optIn: true), channels)
+            .Should().Be(2);
+        LiveTvService.CountCredentialedCatchupChannels(MakeCatchupDispatcharrConfig(), channels)
+            .Should().Be(0);
+
+        var catchupOff = MakeCatchupDispatcharrConfig(optIn: true);
+        catchupOff.EnableCatchup = false;
+        LiveTvService.CountCredentialedCatchupChannels(catchupOff, channels).Should().Be(0);
+        LiveTvService.CountCredentialedCatchupChannels(catchupOff, null).Should().Be(0);
+    }
+
+    [Fact]
+    public void SelectPlaylistChannels_CatchupOnlyKeepsTheArchiveChannels()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, TvArchive = true, TvArchiveDuration = 3 },
+            new() { StreamId = 2 },
+            new() { StreamId = 3, TvArchive = true, TvArchiveDuration = 0 },
+        };
+
+        LiveTvService.SelectPlaylistChannels(channels, catchupOnly: true)
+            .Select(c => c.StreamId).Should().BeEquivalentTo(new[] { 1 });
+        LiveTvService.SelectPlaylistChannels(channels, catchupOnly: false).Should().BeSameAs(channels);
+    }
+
     [Fact]
     public void GenerateM3U_ChannelWithKnownCategory_EmitsGroupTitle()
     {

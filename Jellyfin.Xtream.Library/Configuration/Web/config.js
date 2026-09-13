@@ -370,6 +370,7 @@ var XtreamLibraryConfig = (function () {
             // Catch-up
             document.getElementById('chkEnableCatchup').checked = config.EnableCatchup || false;
             document.getElementById('txtCatchupDays').value = config.CatchupDays || 7;
+            document.getElementById('chkEmitCredentialedCatchupSource').checked = config.EmitCredentialedCatchupSource || false;
             document.getElementById('chkShowCatchupInJellyfin').checked = config.ShowCatchupInJellyfin || false;
             document.getElementById('txtCatchupBlockMinutes').value =
                 config.CatchupBlockMinutes != null ? config.CatchupBlockMinutes : 30;
@@ -462,6 +463,7 @@ var XtreamLibraryConfig = (function () {
             // Catch-up
             config.EnableCatchup = document.getElementById('chkEnableCatchup').checked;
             config.CatchupDays = parseInt(document.getElementById('txtCatchupDays').value) || 7;
+            config.EmitCredentialedCatchupSource = document.getElementById('chkEmitCredentialedCatchupSource').checked;
             config.ShowCatchupInJellyfin = document.getElementById('chkShowCatchupInJellyfin').checked;
             var catchupBlock = parseInt(document.getElementById('txtCatchupBlockMinutes').value);
             config.CatchupBlockMinutes = isNaN(catchupBlock) ? 30 : catchupBlock;
