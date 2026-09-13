@@ -1219,6 +1219,16 @@
                                 <strong>Catch-up M3U URL</strong>: not consumed by Jellyfin itself. Jellyfin's Live TV has no catch-up / timeshift concept. This URL is for catch-up-aware IPTV clients (e.g. Tivimate, XC-VM clients); the main M3U above already inlines the catch-up attributes (<code>catchup</code>, <code>catchup-days</code>, <code>catchup-source</code>) on each channel that supports archive.
                                 <br><br>
                                 <strong>Do not also enable the Native Tuner option above</strong>. Adding the M3U URL here as a manual tuner while the native tuner is active causes every channel to appear twice in the Live TV Guide.
+                                <br /><br />
+                                <strong style="color: #ff6b6b;">Treat these URLs like your Xtream password.</strong>
+                                They work without a Jellyfin login, because Jellyfin's own tuner and guide fetcher send no
+                                login when they call them. Xtream has no token or session form, so your username and password
+                                sit in every stream line of the playlist. Anyone who can reach one of these URLs has your
+                                provider account, no login needed, and the path is the same on every install of this plugin.
+                                <br /><br />
+                                If Jellyfin is reachable from the internet, restrict <code>/XtreamLibrary/</code> at your
+                                reverse proxy to the addresses that need it. The Native Tuner above avoids this entirely:
+                                it hands channels to Jellyfin internally and never publishes a playlist.
                             </div>
                             <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtM3UUrl">M3U Playlist URL</label>

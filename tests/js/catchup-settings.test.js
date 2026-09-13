@@ -68,3 +68,14 @@ test('the Jellyfin catch-up toggle explains that it needs the other one too', ()
     const section = HTML.slice(HTML.indexOf('id="chkShowCatchupInJellyfin"'));
     assert.match(section.slice(0, 1600), /Both have to be on/);
 });
+
+test('the setup URLs carry the security warning', () => {
+    // GitHub #109. These four endpoints are anonymous by design, and the M3U they return has the
+    // Xtream password in every stream line. The operator copies these URLs from this page, so this
+    // is the one place the warning has to be.
+    const section = HTML.slice(HTML.indexOf('sectionTitle">Setup URLs'));
+    const block = section.slice(0, 4000);
+    assert.match(block, /Treat these URLs like your Xtream password/);
+    assert.match(block, /without a Jellyfin login/);
+    assert.match(block, /Native Tuner above avoids this/);
+});
