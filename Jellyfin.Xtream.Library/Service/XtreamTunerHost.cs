@@ -313,6 +313,12 @@ public class XtreamTunerHost : ITunerHost
             Protocol = MediaProtocol.Http,
             Container = isHls ? "hls" : "mpegts",
             SupportsProbing = !hasStats,
+
+            // GitHub #107. Jellyfin only probes a live source while opening it, and PlaybackInfo
+            // only opens one that asks to be opened (MediaInfoController:223, inside the
+            // AutoOpenLiveStream branch). Without this the probe below is unreachable no matter
+            // what SupportsProbing says. A source that came with stats needs neither.
+            RequiresOpening = !hasStats,
             IsRemote = true,
             IsInfiniteStream = true,
             SupportsDirectPlay = false,
@@ -378,25 +384,25 @@ public class XtreamTunerHost : ITunerHost
         }
         else
         {
-            // No stats — provide defaults with IsInterlaced=false.
-            // Codec is left null: Jellyfin will transcode video (no stream copy without known codec)
-            // but without yadif deinterlacing, transcode runs at ~2.5x vs ~0.7x with yadif.
-            // Audio stream with null codec ensures audio is included and transcoded.
-            mediaSource.MediaStreams = new List<MediaStream>
-            {
-                new MediaStream
-                {
-                    Type = MediaStreamType.Video,
-                    Index = 0,
-                    IsInterlaced = false,
-                },
-                new MediaStream
-                {
-                    Type = MediaStreamType.Audio,
-                    Index = 1,
-                },
-            };
-            logger.LogDebug("Channel {ChannelId}: no stats available, will probe", channelId);
+            // GitHub #107. No stats, so leave this empty and let Jellyfin find out for itself.
+            //
+            // It decides whether to probe with
+            //     if (MediaStreams.Any(i => i.Index != -1) || !SupportsProbing) -> skip the probe
+            // (MediaSourceManager:522). The placeholders that used to sit here carried index 0 and
+            // 1, which satisfied that first test, so the probe never ran and the codec stayed
+            // unknown. Clients then refused the stream as an unsupported codec and the server
+            // transcoded material they could have played untouched, without hardware acceleration
+            // because it did not know what it was decoding either.
+            //
+            // Leaving it empty is safe: LiveTvMediaSourceProvider.Normalize fills in its own
+            // entries when the list is empty, at index -1, which does not satisfy that test.
+            //
+            // The cost is on the path where the probe fails. Jellyfin's own placeholder assumes
+            // interlaced, where this used to assert progressive, so a failed probe now deinterlaces
+            // and transcodes slower. That is the rarer path, and guessing progressive was only ever
+            // a guess.
+            mediaSource.MediaStreams = new List<MediaStream>();
+            logger.LogDebug("Channel {ChannelId}: no stats available, probing enabled", channelId);
         }
 
         return mediaSource;
