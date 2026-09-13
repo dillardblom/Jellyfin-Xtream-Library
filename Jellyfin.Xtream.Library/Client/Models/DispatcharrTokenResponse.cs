@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+using System.Collections.Generic;
 using Newtonsoft.Json;
 
 #pragma warning disable CS1591
@@ -58,4 +59,30 @@ public class DispatcharrMovieDetail
 
     [JsonProperty("name")]
     public string Name { get; set; } = string.Empty;
+}
+
+public class DispatcharrChannel
+{
+    [JsonProperty("id")]
+    public int Id { get; set; }
+
+    [JsonProperty("uuid")]
+    public string Uuid { get; set; } = string.Empty;
+
+    [JsonProperty("name")]
+    public string Name { get; set; } = string.Empty;
+
+    // Present only when the listing was asked for with include_streams=true. Each entry carries the
+    // stream_id of the upstream provider stream behind this channel (GitHub #113).
+    [JsonProperty("streams")]
+    public List<DispatcharrChannelSource>? Streams { get; set; }
+}
+
+public class DispatcharrChannelSource
+{
+    [JsonProperty("id")]
+    public int Id { get; set; }
+
+    [JsonProperty("stream_id")]
+    public int? StreamId { get; set; }
 }

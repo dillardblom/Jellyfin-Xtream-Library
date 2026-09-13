@@ -157,6 +157,7 @@ public class LiveChannelSnapshot
                 EpgChannelId = entry.EpgChannelId,
                 StreamIcon = entry.StreamIcon,
                 StreamType = entry.StreamType,
+                DispatcharrUuid = entry.DispatcharrUuid,
                 Num = entry.Num,
                 Tags = entry.Tags,
                 CategoryId = entry.CategoryId,
@@ -279,6 +280,21 @@ public class LiveChannelSnapshotEntry
     public string StreamType { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets Dispatcharr's uuid for this channel (GitHub #113).
+    /// <para>
+    /// Kept for the same reason <see cref="StreamType"/> is: the M3U is usually rendered from this
+    /// snapshot rather than from a fresh fetch, so a uuid held only in memory would produce
+    /// credential-free URLs on the runs that reached Dispatcharr and credential-bearing ones on
+    /// the runs served from disk, alternating with nothing to explain it.
+    /// </para>
+    /// <para>
+    /// Empty in a snapshot written before this existed, which reads as no match and falls back,
+    /// exactly what every earlier version did.
+    /// </para>
+    /// </summary>
+    public string DispatcharrUuid { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets the channel number from the provider.
     /// </summary>
     public int Num { get; set; }
@@ -350,6 +366,7 @@ public class LiveChannelSnapshotEntry
             EpgChannelId = channel.EpgChannelId ?? string.Empty,
             StreamIcon = channel.StreamIcon ?? string.Empty,
             StreamType = channel.StreamType ?? string.Empty,
+            DispatcharrUuid = channel.DispatcharrUuid ?? string.Empty,
             Num = channel.Num,
             Tags = channel.Tags,
             Checksum = ComputeChecksum(channel),

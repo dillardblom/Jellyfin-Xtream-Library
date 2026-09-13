@@ -95,4 +95,13 @@ public interface IDispatcharrClient
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Episodes grouped by season number. Empty if unavailable.</returns>
     Task<Dictionary<int, ICollection<Episode>>> GetSeriesEpisodesAsync(string baseUrl, int seriesId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Gets Dispatcharr's own channel listing, with the upstream streams behind each channel
+    /// included, so Live TV URLs can be built without credentials in them (GitHub #113).
+    /// </summary>
+    /// <param name="baseUrl">Dispatcharr's base URL.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The channels, empty when Dispatcharr had nothing usable to say.</returns>
+    Task<IReadOnlyList<DispatcharrChannel>> GetChannelsAsync(string baseUrl, CancellationToken cancellationToken);
 }

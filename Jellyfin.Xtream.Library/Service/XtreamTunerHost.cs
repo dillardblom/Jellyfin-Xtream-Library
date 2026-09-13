@@ -384,6 +384,13 @@ public class XtreamTunerHost : ITunerHost
         }
         else
         {
+            // GitHub #113, for whoever routes this path through Dispatcharr next: probing must be
+            // switched off for a Dispatcharr proxy URL. The probe opens a short-lived connection
+            // that Dispatcharr counts as a client and tears the channel down when it closes, which
+            // turns into a retry storm. That is in direct tension with everything below, so the two
+            // have to be reconciled before a proxy URL ever reaches here. Live TV playlists route
+            // through Dispatcharr today; this tuner does not.
+            //
             // GitHub #107. No stats, so leave this empty and let Jellyfin find out for itself.
             //
             // It decides whether to probe with

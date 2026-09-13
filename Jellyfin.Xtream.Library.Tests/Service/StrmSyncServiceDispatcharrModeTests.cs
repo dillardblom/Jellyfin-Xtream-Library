@@ -54,7 +54,7 @@ public class StrmSyncServiceDispatcharrModeTests
         var appHostMock = new Mock<IServerApplicationHost>();
         appHostMock.Setup(h => h.GetApiUrlForLocalAccess(It.IsAny<System.Net.IPAddress>(), It.IsAny<bool>()))
             .Returns("http://127.0.0.1:8096");
-        var liveTvService = new LiveTvService(_mockClient.Object, appPathsMock.Object, appHostMock.Object, NullLogger<LiveTvService>.Instance);
+        var liveTvService = new LiveTvService(_mockClient.Object, _mockDispatcharrClient.Object, appPathsMock.Object, appHostMock.Object, NullLogger<LiveTvService>.Instance);
 
         _syncService = new StrmSyncService(
             _mockClient.Object,

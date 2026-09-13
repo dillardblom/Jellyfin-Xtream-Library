@@ -94,4 +94,14 @@ public class LiveStreamInfo
     /// </summary>
     [JsonIgnore]
     public int ProviderIndex { get; set; }
+
+    /// <summary>
+    /// Gets or sets Dispatcharr's own uuid for this channel, when the plugin matched it
+    /// (GitHub #113). Not from the Xtream API - Dispatcharr's emulation says nothing about its own
+    /// identifiers, so this is filled in from a separate call to its REST API.
+    /// Empty means no match, and the channel falls back to the Xtream URL with the credentials
+    /// that implies.
+    /// </summary>
+    [JsonIgnore]
+    public string DispatcharrUuid { get; set; } = string.Empty;
 }

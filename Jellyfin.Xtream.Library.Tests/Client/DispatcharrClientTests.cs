@@ -479,6 +479,87 @@ public class DispatcharrClientTests : IDisposable
 
     #endregion
 
+    #region GetChannelsAsync (GitHub #113)
+
+    [Fact]
+    public async Task GetChannelsAsync_ReturnsChannelsWithTheirStreams()
+    {
+        // Shape as returned by GET /api/channels/channels/?include_streams=true: a bare array, and
+        // each channel carrying the upstream streams behind it.
+        var payload = new[]
+        {
+            new
+            {
+                id = 42,
+                uuid = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+                name = "NPO 1 HD",
+                streams = new[] { new { id = 7, stream_id = 69307 } },
+            },
+        };
+
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/channels/channels/", HttpStatusCode.OK, JsonConvert.SerializeObject(payload)));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var result = await client.GetChannelsAsync("http://test.example.com", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].Id.Should().Be(42);
+        result[0].Uuid.Should().Be("0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0");
+        result[0].Streams.Should().ContainSingle();
+        result[0].Streams![0].StreamId.Should().Be(69307);
+    }
+
+    [Fact]
+    public async Task GetChannelsAsync_NotFound_ReturnsEmptyRatherThanThrowing()
+    {
+        // An older Dispatcharr without this endpoint must degrade to credentialed URLs, not break
+        // the whole playlist.
+        var httpClient = CreateMockHttpClient(
+            ("/api/accounts/token/", HttpStatusCode.OK, JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" })),
+            ("/api/channels/channels/", HttpStatusCode.NotFound, string.Empty));
+
+        var client = new DispatcharrClient(httpClient, _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        (await client.GetChannelsAsync("http://test.example.com", CancellationToken.None)).Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetChannelsAsync_Canceled_PropagatesCancellation()
+    {
+        // An empty result means "no Dispatcharr match, fall back to the credentialed URL". If
+        // cancellation collapsed into that, cancelling would quietly produce a playlist carrying
+        // the provider password instead of stopping.
+        var handler = new FuncHttpMessageHandler((request, ct) =>
+        {
+            if (request.RequestUri!.ToString().Contains("/api/accounts/token/", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        JsonConvert.SerializeObject(new { access = "test-token", refresh = "refresh-token" }),
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
+            throw new OperationCanceledException();
+        });
+
+        var client = new DispatcharrClient(new HttpClient(handler), _mockLogger.Object);
+        client.Configure("admin", "password");
+
+        var act = () => client.GetChannelsAsync("http://test.example.com", CancellationToken.None);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    #endregion
+
     #region Token Refresh Tests
 
     [Fact]

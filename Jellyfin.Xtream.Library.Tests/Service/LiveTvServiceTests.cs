@@ -42,7 +42,7 @@ public class LiveTvServiceTests
         var appHostMock = new Mock<IServerApplicationHost>();
         appHostMock.Setup(h => h.GetApiUrlForLocalAccess(It.IsAny<System.Net.IPAddress>(), It.IsAny<bool>()))
             .Returns("http://127.0.0.1:8096");
-        _service = new LiveTvService(clientMock.Object, appPathsMock.Object, appHostMock.Object, NullLogger<LiveTvService>.Instance);
+        _service = new LiveTvService(clientMock.Object, new Mock<IDispatcharrClient>().Object, appPathsMock.Object, appHostMock.Object, NullLogger<LiveTvService>.Instance);
     }
 
     [Fact]
@@ -472,6 +472,122 @@ public class LiveTvServiceTests
 
         restored.Should().Be(direct);
         restored.Should().Contain("radio=\"true\"");
+    }
+
+    // GitHub #113. These playlists are served without a Jellyfin login, so every credential in one
+    // is handed to whoever fetches it. A channel Dispatcharr can be matched to has a URL that needs
+    // no credentials at all.
+
+    private static PluginConfiguration MakeDispatcharrConfig()
+    {
+        var config = new PluginConfiguration { LiveTvOutputFormat = "ts" };
+        config.Providers.Add(new ProviderConfig
+        {
+            BaseUrl = "http://xtream.example.com:8080",
+            Username = "multiuser",
+            Password = "s3cr3t",
+            EnableDispatcharrMode = true,
+            DispatcharrBaseUrl = "http://dispatcharr.example.com:9191",
+            DispatcharrApiUser = "admin",
+        });
+        return config;
+    }
+
+    [Fact]
+    public void GenerateM3U_MatchedChannel_UsesTheProxyUrlAndLeaksNothing()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, DispatcharrUuid = "uuid-one" },
+        };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeDispatcharrConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+
+        m3u.Should().Contain("http://dispatcharr.example.com:9191/proxy/ts/stream/uuid-one");
+        m3u.Should().NotContain("s3cr3t", "a playlist anyone can fetch must not carry the provider password");
+        m3u.Should().NotContain("multiuser");
+    }
+
+    [Fact]
+    public void GenerateM3U_UnmatchedChannel_FallsBackRatherThanDisappearing()
+    {
+        // A channel that worked yesterday must still work today. The cost is that its line keeps
+        // the credentials, which is what CountCredentialBearingChannels reports.
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 2, Name = "Channel 2", Num = 2 },
+        };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeDispatcharrConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+
+        m3u.Should().Contain("/live/multiuser/s3cr3t/2.ts");
+        m3u.Should().NotContain("/proxy/ts/stream/");
+    }
+
+    [Fact]
+    public void GenerateM3U_ProxyUrlUsesDispatcharrsOwnHostNotTheXtreamOne()
+    {
+        // The whole reason DispatcharrBaseUrl exists is that they are not always the same host
+        // (GitHub #83). Getting this wrong points the playlist at a host that cannot serve it.
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, DispatcharrUuid = "uuid-one" },
+        };
+
+        var m3u = LiveTvService.GenerateM3U(channels, MakeDispatcharrConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+
+        m3u.Should().Contain("http://dispatcharr.example.com:9191/proxy/ts/stream/");
+        m3u.Should().NotContain("http://xtream.example.com:8080/proxy/");
+    }
+
+    [Fact]
+    public void GenerateM3U_TheProxyUrlSurvivesASnapshotRoundTrip()
+    {
+        // The M3U is usually rendered from the stored snapshot rather than a fresh fetch. A uuid
+        // held only in memory would produce a credential-free playlist on the runs that reached
+        // Dispatcharr and a credentialed one on the runs served from disk, alternating with
+        // nothing to explain it. Same trap as stream_type in #112.
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, Name = "Channel 1", Num = 1, DispatcharrUuid = "uuid-one" },
+        };
+        var config = MakeDispatcharrConfig();
+
+        var direct = LiveTvService.GenerateM3U(channels, config, catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>());
+        var restored = LiveTvService.GenerateM3U(
+            LiveChannelSnapshot.FromChannels(channels).ToChannels(),
+            config,
+            catchupOnly: false,
+            "http://127.0.0.1:8096",
+            new Dictionary<int, string>());
+
+        restored.Should().Be(direct);
+        restored.Should().Contain("/proxy/ts/stream/uuid-one");
+        restored.Should().NotContain("s3cr3t");
+    }
+
+    [Fact]
+    public void GenerateM3U_WithNoDispatcharrMatches_IsUnchangedFromBefore()
+    {
+        // Nothing about this feature may alter the output for someone not using Dispatcharr.
+        var channels = new List<LiveStreamInfo> { new() { StreamId = 1, Name = "Channel 1", Num = 1 } };
+
+        LiveTvService.GenerateM3U(channels, MakeM3UConfig(), catchupOnly: false, "http://127.0.0.1:8096", new Dictionary<int, string>())
+            .Should().Contain("/live/multiuser/");
+    }
+
+    [Fact]
+    public void CountCredentialBearingChannels_CountsOnlyTheUnmatchedOnes()
+    {
+        var channels = new List<LiveStreamInfo>
+        {
+            new() { StreamId = 1, DispatcharrUuid = "uuid-one" },
+            new() { StreamId = 2 },
+            new() { StreamId = 3, DispatcharrUuid = string.Empty },
+        };
+
+        LiveTvService.CountCredentialBearingChannels(channels).Should().Be(2);
+        LiveTvService.CountCredentialBearingChannels(null).Should().Be(0);
     }
 
     [Fact]
