@@ -213,12 +213,23 @@ Uses strict code analysis (TreatWarningsAsErrors). Key rules disabled in `jellyf
 - CA1819: Properties returning arrays (needed for configuration DTOs)
 - CA1056: URI properties as strings
 - CA1848: LoggerMessage delegates
+- CA1873: Expensive log arguments when logging is disabled (the .NET 10 analyzers' version of the same advice; it fires on 244 call sites here)
 
 ## Target Framework
-- .NET 9.0
-- Jellyfin 10.11.0+
+- .NET 10.0
+- Jellyfin 12.0.0+
+
+The 2.x line targets Jellyfin 12, which runs on .NET 10. A 2.x DLL does not load on 10.11 and a 1.x
+DLL does not load on 12.0, so the two lines are not interchangeable. Both manifests carry entries
+for each, with `targetAbi` telling the server which one it may install: `10.11.0.0` on the 1.x
+entries, `12.0.0.0` on the 2.x ones. That is what 32 of 32 official plugins did when 12.0 shipped,
+and all 32 stopped publishing for 10.11 at the same moment.
+
+**The 1.x line is frozen at 1.55.0.0.** Anything still on Jellyfin 10.11 stays there. Before
+reviving it for a fix, check the download counts on both lines: that split is the only measurement
+of how many users are still on 10.11, since the plugin has no telemetry.
 
 ## Key Dependencies
-- Jellyfin.Controller 10.11.0
-- Jellyfin.Model 10.11.0
+- Jellyfin.Controller 12.0.0
+- Jellyfin.Model 12.0.0
 - Newtonsoft.Json 13.0.3 (required for Xtream API quirks)
