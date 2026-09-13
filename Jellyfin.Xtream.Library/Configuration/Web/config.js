@@ -109,6 +109,7 @@ const XtreamLibraryConfig = {
         if (!p) return;
         this.activeProviderIndex = index;
 
+        document.getElementById('txtName').value = p.Name || '';
         document.getElementById('txtBaseUrl').value = p.BaseUrl || '';
         document.getElementById('txtUsername').value = p.Username || '';
         document.getElementById('txtPassword').value = p.Password || '';
@@ -189,6 +190,7 @@ const XtreamLibraryConfig = {
         var p = this.providers[this.activeProviderIndex];
         if (!p) return;
 
+        p.Name = document.getElementById('txtName').value.trim();
         p.BaseUrl = document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, '');
         p.Username = document.getElementById('txtUsername').value.trim();
         p.Password = document.getElementById('txtPassword').value.trim();
@@ -2723,6 +2725,20 @@ function initXtreamLibraryConfig() {
             XtreamLibraryConfig.updateActiveProviderFromUI();
             var newIndex = parseInt(this.value);
             XtreamLibraryConfig.loadProviderIntoUI(newIndex);
+        });
+    }
+
+    // GitHub #99. Renaming redraws the dropdown as you type, so the label you are about to pick
+    // from is the one you just typed. activeProviderIndex is read inside the handler rather than
+    // captured here: a keystroke landing while the dropdown is switching would otherwise write the
+    // name onto whichever provider happened to be active when the page loaded.
+    var txtName = document.getElementById('txtName');
+    if (txtName) {
+        txtName.addEventListener('input', function () {
+            var p = XtreamLibraryConfig.providers[XtreamLibraryConfig.activeProviderIndex];
+            if (!p) return;
+            p.Name = this.value.trim();
+            XtreamLibraryConfig.renderProviderSelector();
         });
     }
 

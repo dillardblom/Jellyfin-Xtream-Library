@@ -305,6 +305,16 @@
                         <div class="verticalSection">
                             <h3 class="sectionTitle">Provider Credentials</h3>
                             <div class="inputContainer">
+                                <label class="inputLabel inputLabelUnfocused" for="txtName">Name</label>
+                                <input is="emby-input" type="text" id="txtName" name="Name"
+                                       placeholder="Provider 1" />
+                                <div class="fieldDescription">
+                                    What this provider is called in the dropdown at the top of the page, so you can
+                                    tell several accounts apart. Leave it empty and the dropdown falls back to the
+                                    provider's position in the list.
+                                </div>
+                            </div>
+                            <div class="inputContainer">
                                 <label class="inputLabel inputLabelUnfocused" for="txtBaseUrl">Base URL</label>
                                 <input is="emby-input" type="text" id="txtBaseUrl" name="BaseUrl"
                                        placeholder="http://provider.com:8000" required />
