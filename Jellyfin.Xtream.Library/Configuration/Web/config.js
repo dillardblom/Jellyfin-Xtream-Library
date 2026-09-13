@@ -2006,25 +2006,43 @@ var XtreamLibraryConfig = (function () {
     },
 
     testDispatcharr: function () {
+        const self = this;
         const statusSpan = document.getElementById('dispatcharrStatus');
         statusSpan.innerHTML = '<span style="color: orange;">Testing...</span>';
+
+        // GitHub #114. Sent from the form, the way testConnection two sections up already does it.
+        // Reading the saved configuration instead meant the obvious order (type, test, save once it
+        // goes green) tested the previous password and answered with the same red "authentication
+        // failed" that a genuinely wrong one gets, with nothing on screen to tell them apart.
+        //
+        // An emptied Dispatcharr URL is sent as "" rather than left out: empty asks the server for
+        // the Xtream host, and omitting the field asks it for the saved URL. Those differ.
+        const credentials = {
+            BaseUrl: document.getElementById('txtBaseUrl').value.trim().replace(/\/$/, ''),
+            DispatcharrBaseUrl: document.getElementById('txtDispatcharrBaseUrl').value.trim().replace(/\/$/, ''),
+            ApiUser: document.getElementById('txtDispatcharrApiUser').value.trim(),
+            ApiPass: document.getElementById('txtDispatcharrApiPass').value.trim()
+        };
 
         fetch(ApiClient.getUrl('XtreamLibrary/TestDispatcharr') + '?providerIndex=' + this.activeProviderIndex, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'MediaBrowser Token=' + ApiClient.accessToken()
-            }
+            },
+            body: JSON.stringify(credentials)
         }).then(function (response) {
             return response.json();
         }).then(function (result) {
+            // Escaped like its neighbour. The message can carry a server exception, which repeats
+            // the URL the user typed.
             if (result.Success) {
-                statusSpan.innerHTML = '<span style="color: #52b54b;">' + result.Message + '</span>';
+                statusSpan.innerHTML = '<span style="color: #52b54b;">' + self.escapeHtml(result.Message) + '</span>';
             } else {
-                statusSpan.innerHTML = '<span style="color: #ff6b6b;">' + result.Message + '</span>';
+                statusSpan.innerHTML = '<span style="color: #ff6b6b;">' + self.escapeHtml(result.Message) + '</span>';
             }
         }).catch(function (err) {
-            statusSpan.innerHTML = '<span style="color: #ff6b6b;">Error: ' + err.message + '</span>';
+            statusSpan.innerHTML = '<span style="color: #ff6b6b;">' + self.escapeHtml('Error: ' + err.message) + '</span>';
         });
     },
 

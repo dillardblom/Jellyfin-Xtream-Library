@@ -347,4 +347,131 @@ public class SyncControllerTests
     }
 
     #endregion
+
+    #region TestDispatcharr Credential Resolution Tests
+
+    // GitHub #114. Test Dispatcharr read the saved configuration, so typing a password and pressing
+    // Test before saving tested the previous one and failed with the same message a wrong password
+    // gets. The resolver is what decides between typed and saved, so it is pinned here rather than
+    // through the endpoint, which needs a live Plugin.Instance.
+
+    private static ProviderConfig SavedProvider() => new()
+    {
+        BaseUrl = "http://xtream.example.com:8080",
+        DispatcharrBaseUrl = "http://dispatcharr.example.com:9191",
+        DispatcharrApiUser = "saved-admin",
+        DispatcharrApiPass = "saved-pass",
+    };
+
+    [Fact]
+    public void ResolveDispatcharrTestTarget_PrefersWhatTheFormSent()
+    {
+        var request = new DispatcharrTestRequest
+        {
+            BaseUrl = "http://typed-xtream:8080",
+            DispatcharrBaseUrl = "http://typed-dispatcharr:9191",
+            ApiUser = "typed-admin",
+            ApiPass = "typed-pass",
+        };
+
+        var (baseUrl, apiUser, apiPass) = SyncController.ResolveDispatcharrTestTarget(request, SavedProvider());
+
+        baseUrl.Should().Be("http://typed-dispatcharr:9191");
+        apiUser.Should().Be("typed-admin");
+        apiPass.Should().Be("typed-pass");
+    }
+
+    [Fact]
+    public void ResolveDispatcharrTestTarget_NoBodyStillTestsWhatIsSaved()
+    {
+        // The pre-#114 caller sent no body at all. That has to keep working, and it is also what
+        // "test what is configured" means for anything calling the endpoint directly.
+        var (baseUrl, apiUser, apiPass) = SyncController.ResolveDispatcharrTestTarget(null, SavedProvider());
+
+        baseUrl.Should().Be("http://dispatcharr.example.com:9191");
+        apiUser.Should().Be("saved-admin");
+        apiPass.Should().Be("saved-pass");
+    }
+
+    [Fact]
+    public void ResolveDispatcharrTestTarget_AnEmptiedDispatcharrUrlMeansTheXtreamHost()
+    {
+        // The trap this whole resolver is shaped around. Clearing the field asks for the Xtream
+        // host; treating empty as "not sent" would restore the URL the user just deleted and
+        // report a result for an address that is no longer on screen.
+        var request = new DispatcharrTestRequest
+        {
+            BaseUrl = "http://typed-xtream:8080",
+            DispatcharrBaseUrl = string.Empty,
+            ApiUser = "typed-admin",
+            ApiPass = "typed-pass",
+        };
+
+        SyncController.ResolveDispatcharrTestTarget(request, SavedProvider())
+            .BaseUrl.Should().Be("http://typed-xtream:8080");
+    }
+
+    [Fact]
+    public void ResolveDispatcharrTestTarget_AnEmptiedPasswordIsTestedAsEmpty()
+    {
+        // Same rule one field over: clearing a password and pressing Test must not quietly test
+        // the old one and go green.
+        var request = new DispatcharrTestRequest
+        {
+            BaseUrl = "http://typed-xtream:8080",
+            DispatcharrBaseUrl = "http://typed-dispatcharr:9191",
+            ApiUser = "typed-admin",
+            ApiPass = string.Empty,
+        };
+
+        SyncController.ResolveDispatcharrTestTarget(request, SavedProvider())
+            .ApiPass.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ResolveDispatcharrTestTarget_WorksBeforeAnythingHasBeenSaved()
+    {
+        // A provider being configured for the first time has no stored entry at this index, which
+        // used to answer "Please configure Base URL first" however much had been typed.
+        var request = new DispatcharrTestRequest
+        {
+            BaseUrl = "http://typed-xtream:8080",
+            DispatcharrBaseUrl = string.Empty,
+            ApiUser = "typed-admin",
+            ApiPass = "typed-pass",
+        };
+
+        var (baseUrl, apiUser, _) = SyncController.ResolveDispatcharrTestTarget(request, null);
+
+        baseUrl.Should().Be("http://typed-xtream:8080");
+        apiUser.Should().Be("typed-admin");
+    }
+
+    [Fact]
+    public void ResolveDispatcharrTestTarget_TrailingSlashIsHandledLikeEverywhereElse()
+    {
+        // Reused from ProviderConfig rather than reimplemented, so the test and the sync cannot
+        // disagree about the same URL (GitHub #83).
+        var request = new DispatcharrTestRequest
+        {
+            DispatcharrBaseUrl = "http://typed-dispatcharr:9191/",
+        };
+
+        SyncController.ResolveDispatcharrTestTarget(request, SavedProvider())
+            .BaseUrl.Should().Be("http://typed-dispatcharr:9191");
+    }
+
+    [Fact]
+    public void ResolveDispatcharrTestTarget_NothingTypedAndNothingSavedIsEmpty()
+    {
+        var (baseUrl, apiUser, apiPass) = SyncController.ResolveDispatcharrTestTarget(
+            new DispatcharrTestRequest { BaseUrl = string.Empty, DispatcharrBaseUrl = string.Empty },
+            null);
+
+        baseUrl.Should().BeEmpty();
+        apiUser.Should().BeEmpty();
+        apiPass.Should().BeEmpty();
+    }
+
+    #endregion
 }
