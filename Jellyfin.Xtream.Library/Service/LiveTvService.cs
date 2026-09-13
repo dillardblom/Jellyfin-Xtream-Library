@@ -42,6 +42,7 @@ namespace Jellyfin.Xtream.Library.Service;
 public class LiveTvService : IDisposable
 {
     private readonly IXtreamClient _client;
+    private readonly IDispatcharrClient _dispatcharrClient;
     private readonly IServerApplicationPaths _appPaths;
     private readonly IServerApplicationHost _appHost;
     private readonly ILogger<LiveTvService> _logger;
@@ -62,12 +63,15 @@ public class LiveTvService : IDisposable
     /// Initializes a new instance of the <see cref="LiveTvService"/> class.
     /// </summary>
     /// <param name="client">The Xtream API client.</param>
+    /// <param name="dispatcharrClient">The Dispatcharr REST client, used to resolve channel uuids
+    /// so Live TV URLs can be built without credentials (GitHub #113).</param>
     /// <param name="appPaths">The Jellyfin application paths (used to locate the channel snapshot file).</param>
     /// <param name="appHost">The Jellyfin application host (used to resolve the server base URL for channel-logo proxy links).</param>
     /// <param name="logger">The logger instance.</param>
-    public LiveTvService(IXtreamClient client, IServerApplicationPaths appPaths, IServerApplicationHost appHost, ILogger<LiveTvService> logger)
+    public LiveTvService(IXtreamClient client, IDispatcharrClient dispatcharrClient, IServerApplicationPaths appPaths, IServerApplicationHost appHost, ILogger<LiveTvService> logger)
     {
         _client = client;
+        _dispatcharrClient = dispatcharrClient;
         _appPaths = appPaths;
         _appHost = appHost;
         _logger = logger;
@@ -134,6 +138,7 @@ public class LiveTvService : IDisposable
             var channels = await GetFilteredChannelsAsync(cancellationToken).ConfigureAwait(false);
             var categoryNames = await GetCategoryNameMapAsync(cancellationToken).ConfigureAwait(false);
             var m3u = GenerateM3U(channels, config, catchupOnly: false, GetServerBaseUrl(), categoryNames);
+            ReportCredentialExposure(channels);
 
             _cachedM3U = m3u;
             _m3uCacheTime = DateTime.UtcNow;
@@ -689,11 +694,67 @@ public class LiveTvService : IDisposable
         {
             var connectionInfo = Plugin.Instance.GetCreds(provider.Index);
             var providerChannels = await GetFilteredChannelsForProviderAsync(config, connectionInfo, provider.Index, cancellationToken).ConfigureAwait(false);
+            await StampDispatcharrUuidsAsync(provider.Provider, providerChannels, cancellationToken).ConfigureAwait(false);
             allChannels.AddRange(providerChannels);
         }
 
         _logger.LogInformation("Fetched {Count} Live TV channels from {ProviderCount} provider(s)", allChannels.Count, liveTvProviders.Count);
         return allChannels;
+    }
+
+    /// <summary>
+    /// Asks Dispatcharr which of its channels these are, and records the uuid on each one it can
+    /// answer for (GitHub #113).
+    /// <para>
+    /// One call per provider, not per channel. Anything unmatched keeps an empty uuid and falls
+    /// back to the Xtream URL, which works but carries the provider password, so the count of
+    /// those is reported when the playlist is rendered.
+    /// </para>
+    /// </summary>
+    /// <param name="provider">The provider whose channels these are.</param>
+    /// <param name="channels">Channels to stamp, modified in place.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    private async Task StampDispatcharrUuidsAsync(
+        ProviderConfig provider,
+        List<LiveStreamInfo> channels,
+        CancellationToken cancellationToken)
+    {
+        // Same guard the sync path uses: the flag alone is not enough, a blank API user means
+        // Dispatcharr was never actually set up and every call would just fail.
+        if (!provider.EnableDispatcharrMode
+            || string.IsNullOrEmpty(provider.DispatcharrApiUser)
+            || channels.Count == 0)
+        {
+            return;
+        }
+
+        _dispatcharrClient.Configure(provider.DispatcharrApiUser, provider.DispatcharrApiPass);
+        var listing = await _dispatcharrClient
+            .GetChannelsAsync(provider.EffectiveDispatcharrBaseUrl, cancellationToken)
+            .ConfigureAwait(false);
+
+        var map = DispatcharrChannelMap.Build(listing);
+        if (map.Count == 0)
+        {
+            _logger.LogInformation(
+                "Dispatcharr returned no channel uuids, so Live TV URLs will carry credentials as before");
+            return;
+        }
+
+        int matched = 0;
+        foreach (var channel in channels)
+        {
+            if (map.TryGetValue(channel.StreamId, out var uuid))
+            {
+                channel.DispatcharrUuid = uuid;
+                matched++;
+            }
+        }
+
+        _logger.LogInformation(
+            "Dispatcharr matched {Matched} of {Total} Live TV channels; the rest keep the credentialed URL",
+            matched,
+            channels.Count);
     }
 
     private async Task<List<LiveStreamInfo>> GetFilteredChannelsForProviderAsync(
@@ -949,11 +1010,78 @@ public class LiveTvService : IDisposable
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Says how much of the playlist still carries the provider password (GitHub #113).
+    /// <para>
+    /// Logged rather than left silent because the whole point of routing through Dispatcharr is
+    /// that these URLs stop being credentials, and a configuration where that quietly does not
+    /// happen looks identical from the outside to one where it does.
+    /// </para>
+    /// </summary>
+    /// <param name="channels">The channels that were rendered.</param>
+    private void ReportCredentialExposure(List<LiveStreamInfo> channels)
+    {
+        int exposed = CountCredentialBearingChannels(channels);
+        if (exposed == 0)
+        {
+            if (channels.Count > 0)
+            {
+                _logger.LogInformation(
+                    "Live TV playlist built entirely from Dispatcharr proxy URLs; it carries no provider credentials");
+            }
+
+            return;
+        }
+
+        _logger.LogInformation(
+            "Live TV playlist: {Exposed} of {Total} channels have no Dispatcharr match, so those lines carry the provider username and password. This playlist is served without a Jellyfin login.",
+            exposed,
+            channels.Count);
+    }
+
+    /// <summary>
+    /// Counts the channels whose stream URL still has credentials in it, meaning the ones
+    /// Dispatcharr could not be matched to (GitHub #113).
+    /// </summary>
+    /// <param name="channels">The channels that were rendered.</param>
+    /// <returns>How many carry credentials.</returns>
+    internal static int CountCredentialBearingChannels(IEnumerable<LiveStreamInfo> channels)
+        => channels?.Count(c => string.IsNullOrEmpty(c.DispatcharrUuid)) ?? 0;
+
     internal static string BuildStreamUrl(PluginConfiguration config, LiveStreamInfo channel)
     {
+        // GitHub #113. These playlists are served without a Jellyfin login, by design, so every
+        // credential in one is handed to whoever fetches it. When Dispatcharr has told us its own
+        // uuid for this channel there is a URL that needs no credentials at all, and it is
+        // strictly better than restricting who may read the ones that do.
+        //
+        // Deliberately EffectiveDispatcharrBaseUrl and not the Xtream base: they are the same host
+        // in most setups and different ones in exactly the setup DispatcharrBaseUrl exists for
+        // (GitHub #83).
+        if (!string.IsNullOrEmpty(channel.DispatcharrUuid))
+        {
+            var dispatcharrBase = ResolveDispatcharrBaseUrl(config, channel.ProviderIndex);
+            if (!string.IsNullOrEmpty(dispatcharrBase))
+            {
+                return DispatcharrChannelMap.BuildProxyStreamUrl(dispatcharrBase, channel.DispatcharrUuid);
+            }
+        }
+
         var (baseUrl, username, password) = ResolveLiveTvProvider(config, channel.ProviderIndex);
         var extension = string.Equals(config.LiveTvOutputFormat, "ts", StringComparison.OrdinalIgnoreCase) ? "ts" : "m3u8";
         return string.Create(CultureInfo.InvariantCulture, $"{baseUrl}/live/{username}/{password}/{channel.StreamId}.{extension}");
+    }
+
+    /// <summary>
+    /// Dispatcharr's base URL for one provider, which is not always the Xtream one (GitHub #83).
+    /// </summary>
+    /// <param name="config">Plugin configuration.</param>
+    /// <param name="providerIndex">Index into the configured providers.</param>
+    /// <returns>The base URL, or empty when this provider has no Dispatcharr.</returns>
+    internal static string ResolveDispatcharrBaseUrl(PluginConfiguration config, int providerIndex = 0)
+    {
+        var p = config.Providers.ElementAtOrDefault(providerIndex) ?? config.Providers.FirstOrDefault();
+        return p?.EffectiveDispatcharrBaseUrl ?? string.Empty;
     }
 
     private static string BuildCatchupUrl(PluginConfiguration config, LiveStreamInfo channel)

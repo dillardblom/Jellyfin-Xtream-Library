@@ -2252,7 +2252,12 @@ public partial class StrmSyncService
                         string uuid = movieProviderInfo.Uuid;
                         for (int i = 0; i < providers.Count; i++)
                         {
-                            string providerStreamUrl = $"{connectionInfo.BaseUrl}/proxy/vod/movie/{uuid}?stream_id={providers[i].StreamId}";
+                            // EffectiveDispatcharrBaseUrl, not the Xtream base. Every REST call in
+                            // this method already uses it, and a setup where Dispatcharr lives on a
+                            // different host is the entire reason that field exists (GitHub #83).
+                            // This line asked one host for the uuid and pointed the STRM file at
+                            // another (GitHub #113).
+                            string providerStreamUrl = $"{provider.EffectiveDispatcharrBaseUrl}/proxy/vod/movie/{uuid}?stream_id={providers[i].StreamId}";
                             string strmFileName = BuildMovieStrmFileName(folderName, i == 0 ? null : $"Version {i + 1}", provider.RegexRemovalPatterns);
                             strmEntries.Add((providerStreamUrl, strmFileName));
                         }

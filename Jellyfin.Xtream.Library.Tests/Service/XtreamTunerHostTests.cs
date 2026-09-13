@@ -72,7 +72,7 @@ public class XtreamTunerHostTests : IDisposable
         var appHostMock = new Mock<IServerApplicationHost>();
         appHostMock.Setup(h => h.GetApiUrlForLocalAccess(It.IsAny<System.Net.IPAddress>(), It.IsAny<bool>()))
             .Returns("http://127.0.0.1:8096");
-        _liveTvService = new LiveTvService(_mockClient.Object, serverAppPaths.Object, appHostMock.Object, NullLogger<LiveTvService>.Instance);
+        _liveTvService = new LiveTvService(_mockClient.Object, new Mock<IDispatcharrClient>().Object, serverAppPaths.Object, appHostMock.Object, NullLogger<LiveTvService>.Instance);
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
         _tunerHost = new XtreamTunerHost(
             _liveTvService,

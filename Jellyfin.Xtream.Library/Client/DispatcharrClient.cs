@@ -279,6 +279,43 @@ public class DispatcharrClient : IDispatcharrClient
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<DispatcharrChannel>> GetChannelsAsync(string baseUrl, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // include_streams gives each channel the upstream streams behind it, which is what
+            // carries the stream id this plugin knows the channel by.
+            //
+            // No paging parameter on purpose. Dispatcharr returns a bare JSON array unless "page"
+            // or "page_size" is present, and sending either turns the response into
+            // {count, results} and breaks this deserialize (GitHub #113).
+            var json = await GetAuthenticatedAsync(
+                baseUrl,
+                $"{baseUrl}/api/channels/channels/?include_streams=true",
+                cancellationToken).ConfigureAwait(false);
+            if (json == null)
+            {
+                return Array.Empty<DispatcharrChannel>();
+            }
+
+            return JsonConvert.DeserializeObject<List<DispatcharrChannel>>(json)
+                   ?? (IReadOnlyList<DispatcharrChannel>)Array.Empty<DispatcharrChannel>();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Information rather than Debug: every channel silently falling back to a URL with the
+            // password in it is exactly the outcome this is meant to prevent, so it should not be
+            // invisible.
+            _logger.LogInformation(ex, "Could not read Dispatcharr's channel list; Live TV URLs will carry credentials");
+            return Array.Empty<DispatcharrChannel>();
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<bool> TestConnectionAsync(string baseUrl, CancellationToken cancellationToken)
     {
         try
