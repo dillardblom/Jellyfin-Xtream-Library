@@ -362,7 +362,7 @@ public class CatchupHistoryCollectorTests
         var collector = new CatchupHistoryCollector(new[] { Channel(1, "npo1") }, Config(showCatchup: false));
 
         collector.IsEnabled.Should().BeFalse();
-        collector.Records("npo1").Should().BeFalse();
+        collector.Records(0, "npo1").Should().BeFalse();
         collector.ToPulls().Should().BeEmpty();
     }
 
@@ -373,21 +373,41 @@ public class CatchupHistoryCollectorTests
             new[] { Channel(1, "npo1"), Channel(2, "npo2", archive: false), Channel(3, "npo3", duration: 0) },
             Config());
 
-        collector.Records("npo1").Should().BeTrue();
-        collector.Records("NPO1").Should().BeTrue("upstream ids are matched the way the EPG output matches them");
-        collector.Records("npo2").Should().BeFalse();
-        collector.Records("npo3").Should().BeFalse();
+        collector.Records(0, "npo1").Should().BeTrue();
+        collector.Records(0, "NPO1").Should().BeTrue("upstream ids are matched the way the EPG output matches them");
+        collector.Records(0, "npo2").Should().BeFalse();
+        collector.Records(0, "npo3").Should().BeFalse();
         collector.ToPulls().Select(p => p.StreamId).Should().Equal(1);
     }
 
     [Fact]
-    public void ChannelsSharingAnEpgIdEachGetTheProgramme()
+    public void ChannelsSharingAnEpgIdOnTheSameProviderEachGetTheProgramme()
     {
         var collector = new CatchupHistoryCollector(new[] { Channel(1, "npo1"), Channel(2, "npo1") }, Config());
 
-        collector.Add("npo1", new CatchupHistoryEntry(1, 2, "t", string.Empty));
+        collector.Add(0, "npo1", new CatchupHistoryEntry(1, 2, "t", string.Empty));
 
         collector.ToPulls().Should().OnlyContain(p => p.Programmes.Count == 1);
+    }
+
+    [Fact]
+    public void ChannelsOnDifferentProvidersSharingAnEpgIdDoNotCrossContaminate()
+    {
+        var channelA = Channel(1, "npo1");
+        channelA.ProviderIndex = 0;
+        var channelB = Channel(2, "npo1");
+        channelB.ProviderIndex = 1;
+
+        var config = Config();
+        config.Providers.Add(TestDataBuilder.CreateProviderConfig(baseUrl: "http://other.example.com"));
+        var collector = new CatchupHistoryCollector(new[] { channelA, channelB }, config);
+
+        collector.Add(0, "npo1", new CatchupHistoryEntry(1, 2, "from provider 0", string.Empty));
+
+        var pulls = collector.ToPulls();
+        pulls.Single(p => p.StreamId == 1).Programmes.Should().ContainSingle();
+        pulls.Single(p => p.StreamId == 2).Programmes.Should()
+            .BeEmpty("provider 1's channel must not receive provider 0's programme just because the upstream EPG id collides");
     }
 
     [Fact]
@@ -530,6 +550,34 @@ public sealed class CatchupHistoryXmltvTests : IDisposable
         recorded.Select(e => e.Title).Should().Equal("Last night", "Now on");
         recorded[0].Description.Should().Be("about Last night");
         (await _liveTvService.CatchupHistory.LoadAsync(ProviderKey, 2, CancellationToken.None)).Should().BeEmpty("the channel keeps no archive");
+    }
+
+    [Fact]
+    public async Task AnXmltvWithOnlyPastProgrammesStillRecordsHistoryInsteadOfFallingBack()
+    {
+        // A fully-read upstream XMLTV whose only programmes fall outside the EPG window writes
+        // nothing to the visible guide. That must not look like a parse failure: falling back
+        // to the JSON fetch here would rebuild the collector from scratch and discard the
+        // history this build already recorded.
+        var now = DateTimeOffset.UtcNow;
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo>
+            {
+                new() { StreamId = 1, Num = 1, Name = "Archive", EpgChannelId = "arch", TvArchive = true, TvArchiveDuration = 3 },
+            });
+        _client
+            .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>" + Programme("arch", now.AddHours(-20), now.AddHours(-19), "Last night") + "</tv>");
+
+        await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+
+        var recorded = await _liveTvService.CatchupHistory.LoadAsync(ProviderKey, 1, CancellationToken.None);
+        recorded.Select(e => e.Title).Should().Equal("Last night");
+        _client.Verify(
+            c => c.GetSimpleDataTableAsync(It.IsAny<ConnectionInfo>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "a valid upstream XMLTV must not trigger the JSON fallback just because every programme was in the past");
     }
 
     [Fact]

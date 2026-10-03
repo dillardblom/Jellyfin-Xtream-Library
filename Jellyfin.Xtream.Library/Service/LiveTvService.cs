@@ -1285,17 +1285,27 @@ public class LiveTvService : IDisposable
             // Prefer upstream XMLTV (preserves category, rating, credits, icon, etc.).
             // Fall back to JSON-based fetch only if the upstream file is unavailable.
             var passthroughCount = 0;
+            var recordedCount = 0;
             if (idMap.Count > 0)
             {
-                var upstreamXml = await GetMergedXmltvAsync(channels, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrEmpty(upstreamXml))
+                var fragments = await GetProviderXmltvFragmentsAsync(channels, cancellationToken).ConfigureAwait(false);
+                foreach (var (providerIndex, upstreamXml) in fragments)
                 {
-                    passthroughCount = AppendUpstreamProgrammes(sb, upstreamXml, idMap, history, config, cancellationToken);
+                    var (written, recorded) = AppendUpstreamProgrammes(sb, upstreamXml, idMap, history, providerIndex, config, cancellationToken);
+                    passthroughCount += written;
+                    recordedCount += recorded;
+                }
+
+                if (fragments.Count > 0)
+                {
                     _logger.LogInformation("Passed through {Count} programmes from upstream XMLTV", passthroughCount);
                 }
             }
 
-            if (passthroughCount == 0)
+            // A fully-read upstream XMLTV that only recorded catch-up history (every programme
+            // fell outside the EPG window) is not a failure: falling back here would discard
+            // that history by rebuilding the collector from scratch below.
+            if (passthroughCount == 0 && recordedCount == 0)
             {
                 _logger.LogInformation("Upstream XMLTV unavailable or empty; falling back to per-channel JSON EPG");
 
@@ -1366,17 +1376,20 @@ public class LiveTvService : IDisposable
     /// All other programme child elements (category, rating, credits, icon, etc.) are
     /// preserved verbatim.
     /// </summary>
-    /// <returns>Number of programmes written; zero, with nothing appended, when the document
-    /// could not be read to the end.</returns>
-    private int AppendUpstreamProgrammes(
+    /// <returns>The programmes written to the visible EPG and the programmes recorded for
+    /// catch-up history; both zero, with nothing appended, when the document could not be read
+    /// to the end.</returns>
+    private (int Written, int Recorded) AppendUpstreamProgrammes(
         StringBuilder sb,
         string upstreamXml,
         Dictionary<string, string> idMap,
         CatchupHistoryCollector history,
+        int providerIndex,
         PluginConfiguration config,
         CancellationToken cancellationToken)
     {
         var written = 0;
+        var recordedCount = 0;
         var startLength = sb.Length;
         var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         // Keep programs that ended up to 1 hour ago to be resilient to timezone/clock skews
@@ -1421,8 +1434,8 @@ public class LiveTvService : IDisposable
                 bool hasStart = TryParseXmltvTime(startAttr, out var startUnix);
                 bool hasStop = TryParseXmltvTime(stopAttr, out var stopUnix);
                 bool outsideWindow = (hasStop && stopUnix < pastGraceUnix) || (hasStart && startUnix > endUnix);
-                bool recorded = hasStart && hasStop && history.Records(upstreamCh);
-                if (outsideWindow && !recorded)
+                bool isRecordable = hasStart && hasStop && history.Records(providerIndex, upstreamCh);
+                if (outsideWindow && !isRecordable)
                 {
                     reader.Skip();
                     continue;
@@ -1439,15 +1452,17 @@ public class LiveTvService : IDisposable
                     continue;
                 }
 
-                if (recorded)
+                if (isRecordable)
                 {
                     history.Add(
+                        providerIndex,
                         upstreamCh,
                         new CatchupHistoryEntry(
                             startUnix,
                             stopUnix,
                             element.Element("title")?.Value ?? string.Empty,
                             element.Element("desc")?.Value ?? string.Empty));
+                    recordedCount++;
                 }
 
                 if (outsideWindow)
@@ -1468,10 +1483,10 @@ public class LiveTvService : IDisposable
             // appended comes out again, or the fallback would list those programmes twice.
             _logger.LogWarning(ex, "Failed to parse upstream XMLTV; falling back to JSON EPG");
             sb.Length = startLength;
-            return 0;
+            return (0, 0);
         }
 
-        return written;
+        return (written, recordedCount);
     }
 
     internal static bool TryParseXmltvTime(string? value, out long unixSeconds)
@@ -1517,20 +1532,25 @@ public class LiveTvService : IDisposable
         return true;
     }
 
-    private async Task<string?> GetMergedXmltvAsync(List<LiveStreamInfo> channels, CancellationToken cancellationToken)
+    /// <summary>
+    /// Fetches each configured provider's upstream XMLTV, keeping them apart so a caller can
+    /// still tell which provider a &lt;programme&gt; came from (needed to keep catch-up history
+    /// from crossing providers that happen to reuse the same EPG channel id).
+    /// </summary>
+    private async Task<List<(int ProviderIndex, string Xml)>> GetProviderXmltvFragmentsAsync(List<LiveStreamInfo> channels, CancellationToken cancellationToken)
     {
-        var fragments = new List<string>();
+        var fragments = new List<(int ProviderIndex, string Xml)>();
         foreach (var providerIndex in channels.Select(c => c.ProviderIndex).Distinct())
         {
             var connectionInfo = Plugin.Instance.GetCreds(providerIndex);
             var xml = await _client.GetXmltvAsync(connectionInfo, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(xml))
             {
-                fragments.Add(xml);
+                fragments.Add((providerIndex, xml));
             }
         }
 
-        return fragments.Count == 0 ? null : string.Join('\n', fragments);
+        return fragments;
     }
 
     private async Task<List<EpgProgram>> FetchEpgDataAsync(

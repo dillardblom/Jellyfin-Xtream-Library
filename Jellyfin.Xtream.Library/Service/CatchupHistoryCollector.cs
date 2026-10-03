@@ -13,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -32,7 +31,7 @@ namespace Jellyfin.Xtream.Library.Service;
 /// </summary>
 internal sealed class CatchupHistoryCollector
 {
-    private readonly Dictionary<string, List<LiveStreamInfo>> _byEpgChannelId = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<(int ProviderIndex, string EpgChannelId), List<LiveStreamInfo>> _byEpgChannelId = new();
     private readonly Dictionary<(int ProviderIndex, int StreamId), (string ProviderKey, int Days)> _channels = new();
     private readonly ConcurrentDictionary<(int ProviderIndex, int StreamId), ConcurrentQueue<CatchupHistoryEntry>> _entries = new();
 
@@ -62,10 +61,11 @@ internal sealed class CatchupHistoryCollector
 
             if (!string.IsNullOrEmpty(channel.EpgChannelId))
             {
-                if (!_byEpgChannelId.TryGetValue(channel.EpgChannelId, out var list))
+                var key = EpgKey(channel.ProviderIndex, channel.EpgChannelId);
+                if (!_byEpgChannelId.TryGetValue(key, out var list))
                 {
                     list = new List<LiveStreamInfo>();
-                    _byEpgChannelId[channel.EpgChannelId] = list;
+                    _byEpgChannelId[key] = list;
                 }
 
                 list.Add(channel);
@@ -81,19 +81,22 @@ internal sealed class CatchupHistoryCollector
     /// <summary>
     /// Whether programmes for an upstream XMLTV channel id are recorded.
     /// </summary>
+    /// <param name="providerIndex">The provider whose XMLTV the programme came from.</param>
     /// <param name="epgChannelId">The channel attribute of an upstream programme.</param>
-    /// <returns>True when a catch-up channel carries that EPG id.</returns>
-    public bool Records(string? epgChannelId)
-        => !string.IsNullOrEmpty(epgChannelId) && _byEpgChannelId.ContainsKey(epgChannelId);
+    /// <returns>True when a catch-up channel of that provider carries that EPG id.</returns>
+    public bool Records(int providerIndex, string? epgChannelId)
+        => !string.IsNullOrEmpty(epgChannelId) && _byEpgChannelId.ContainsKey(EpgKey(providerIndex, epgChannelId));
 
     /// <summary>
-    /// Adds a programme from the upstream XMLTV to every catch-up channel carrying its EPG id.
+    /// Adds a programme from one provider's upstream XMLTV to every catch-up channel of that
+    /// same provider carrying its EPG id.
     /// </summary>
+    /// <param name="providerIndex">The provider whose XMLTV the programme came from.</param>
     /// <param name="epgChannelId">The channel attribute of the programme.</param>
     /// <param name="entry">The programme.</param>
-    public void Add(string epgChannelId, CatchupHistoryEntry entry)
+    public void Add(int providerIndex, string epgChannelId, CatchupHistoryEntry entry)
     {
-        if (!_byEpgChannelId.TryGetValue(epgChannelId, out var channels))
+        if (!_byEpgChannelId.TryGetValue(EpgKey(providerIndex, epgChannelId), out var channels))
         {
             return;
         }
@@ -103,6 +106,13 @@ internal sealed class CatchupHistoryCollector
             Queue(channel).Enqueue(entry);
         }
     }
+
+    /// <summary>
+    /// Keys <see cref="_byEpgChannelId"/> by provider and EPG id, so two providers reusing the
+    /// same upstream id never deliver each other's programmes (GitHub #108 follow-up).
+    /// </summary>
+    private static (int ProviderIndex, string EpgChannelId) EpgKey(int providerIndex, string epgChannelId)
+        => (providerIndex, epgChannelId.ToUpperInvariant());
 
     /// <summary>
     /// Adds one channel's programmes from the provider's JSON EPG.
