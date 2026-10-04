@@ -116,4 +116,40 @@ public sealed class XmltvPassthroughTests : IDisposable
         var xml = await build;
         Regex.Matches(xml, "On now").Should().HaveCount(1, "what the broken pass appended is taken out again before the fallback adds its own");
     }
+
+    [Fact]
+    public async Task TwoProvidersReusingTheSameEpgChannelIdDoNotCrossOverTheProgramme()
+    {
+        var config = Plugin.Instance.Configuration;
+        var providerA = config.Providers[0];
+        var providerB = TestDataBuilder.CreateProviderConfig(baseUrl: "http://other.example.com");
+        config.Providers.Add(providerB);
+
+        var now = DateTimeOffset.UtcNow;
+        var baseUrlA = providerA.BaseUrl;
+        var baseUrlB = providerB.BaseUrl;
+
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "A", EpgChannelId = "shared" } });
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "B", EpgChannelId = "shared" } });
+
+        _client
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>"
+                + $"<programme start=\"{XmltvTime(now.AddMinutes(-30))}\" stop=\"{XmltvTime(now.AddMinutes(30))}\" channel=\"shared\"><title>From A</title></programme>"
+                + "</tv>");
+        _client
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>"
+                + $"<programme start=\"{XmltvTime(now.AddMinutes(-30))}\" stop=\"{XmltvTime(now.AddMinutes(30))}\" channel=\"shared\"><title>From B</title></programme>"
+                + "</tv>");
+
+        var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+
+        xml.Should().Contain("From A").And.Contain("From B", "each provider's own programme must reach its own channel");
+        Regex.Matches(xml, "<programme").Should().HaveCount(2, "neither provider's programme is dropped or duplicated onto the other's channel");
+    }
 }
