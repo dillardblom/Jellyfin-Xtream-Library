@@ -1277,14 +1277,33 @@ public class LiveTvService : IDisposable
             // Prefer upstream XMLTV (preserves category, rating, credits, icon, etc.).
             // Fall back to JSON-based fetch only if the upstream file is unavailable.
             // Fetched and parsed one provider at a time, so a <programme> can be matched against
-            // idMap with the provider it actually came from, not just its bare channel id.
+            // idMap with the provider it actually came from, not just its bare channel id. The
+            // fallback decision is tracked per provider too: one provider's XMLTV being broken or
+            // empty must not be masked by another provider's programmes padding out the total, or
+            // that provider's channels would go without a guide instead of falling back.
             var passthroughCount = 0;
+            var fallbackProviders = new HashSet<int>();
             if (idMap.Count > 0)
             {
                 var fragments = await GetProviderXmltvFragmentsAsync(channels, cancellationToken).ConfigureAwait(false);
+                var providersWithXml = new HashSet<int>();
                 foreach (var (providerIndex, upstreamXml) in fragments)
                 {
-                    passthroughCount += AppendUpstreamProgrammes(sb, upstreamXml, idMap, providerIndex, config, cancellationToken);
+                    providersWithXml.Add(providerIndex);
+                    var written = AppendUpstreamProgrammes(sb, upstreamXml, idMap, providerIndex, config, cancellationToken);
+                    passthroughCount += written;
+                    if (written == 0)
+                    {
+                        fallbackProviders.Add(providerIndex);
+                    }
+                }
+
+                foreach (var providerIndex in channels.Select(c => c.ProviderIndex).Distinct())
+                {
+                    if (!providersWithXml.Contains(providerIndex))
+                    {
+                        fallbackProviders.Add(providerIndex);
+                    }
                 }
 
                 if (fragments.Count > 0)
@@ -1292,11 +1311,16 @@ public class LiveTvService : IDisposable
                     _logger.LogInformation("Passed through {Count} programmes from upstream XMLTV", passthroughCount);
                 }
             }
-
-            if (passthroughCount == 0)
+            else
             {
-                _logger.LogInformation("Upstream XMLTV unavailable or empty; falling back to per-channel JSON EPG");
-                var epgData = await FetchEpgDataAsync(channels, config, cancellationToken).ConfigureAwait(false);
+                fallbackProviders.UnionWith(channels.Select(c => c.ProviderIndex));
+            }
+
+            if (fallbackProviders.Count > 0)
+            {
+                _logger.LogInformation("Upstream XMLTV unavailable or empty for one or more providers; falling back to per-channel JSON EPG for those providers' channels");
+                var fallbackChannels = channels.Where(c => fallbackProviders.Contains(c.ProviderIndex)).ToList();
+                var epgData = await FetchEpgDataAsync(fallbackChannels, config, cancellationToken).ConfigureAwait(false);
 
                 foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
                 {
