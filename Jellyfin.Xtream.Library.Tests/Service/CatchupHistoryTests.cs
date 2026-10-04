@@ -581,6 +581,63 @@ public sealed class CatchupHistoryXmltvTests : IDisposable
     }
 
     [Fact]
+    public async Task AProviderWithRecordedHistoryOnlyDoesNotMaskAnotherProvidersNeedForFallback()
+    {
+        // Provider A's XMLTV has only past programmes: written=0 but recorded>0. That is fine for
+        // provider A alone, but must not be read as "fine" for provider B too. Provider B's XMLTV
+        // breaks outright and must still get the JSON fallback, while provider A's already
+        // recorded history is left untouched.
+        var now = DateTimeOffset.UtcNow;
+        var providerA = Plugin.Instance.Configuration.Providers[0];
+        var providerB = TestDataBuilder.CreateProviderConfig(baseUrl: "http://other.example.com");
+        Plugin.Instance.Configuration.Providers.Add(providerB);
+        var baseUrlA = providerA.BaseUrl;
+        var baseUrlB = providerB.BaseUrl;
+        var providerKeyB = LiveTvService.BuildProviderFingerprints(Plugin.Instance.Configuration)[1];
+
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "Archive A", EpgChannelId = "a", TvArchive = true, TvArchiveDuration = 3 } });
+        _client
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "Archive B", EpgChannelId = "b", TvArchive = true, TvArchiveDuration = 3 } });
+
+        _client
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>" + Programme("a", now.AddHours(-20), now.AddHours(-19), "A history") + "</tv>");
+        _client
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("<tv>" + Programme("b", now.AddHours(-20), now.AddHours(-19), "Never reached") + "<programme start=");
+        _client
+            .Setup(c => c.GetSimpleDataTableAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EpgListings
+            {
+                Listings = new List<EpgProgram>
+                {
+                    new()
+                    {
+                        StartTimestamp = now.AddHours(-3).ToUnixTimeSeconds(),
+                        StopTimestamp = now.AddHours(-2).ToUnixTimeSeconds(),
+                        Title = "RnJvbSBKU09O",
+                        Description = string.Empty,
+                    },
+                },
+            });
+
+        await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+
+        var recordedA = await _liveTvService.CatchupHistory.LoadAsync(ProviderKey, 1, CancellationToken.None);
+        recordedA.Select(e => e.Title).Should().Equal(
+            new[] { "A history" },
+            "provider A's own recorded history must survive even though provider B needed the fallback");
+
+        var recordedB = await _liveTvService.CatchupHistory.LoadAsync(providerKeyB, 1, CancellationToken.None);
+        recordedB.Select(e => e.Title).Should().Equal(
+            new[] { "From JSON" },
+            "provider B must still fall back to its JSON EPG even though provider A's recorded history made the aggregate non-zero");
+    }
+
+    [Fact]
     public async Task AnXmltvThatFailsHalfWayRecordsOnlyTheFallbackGuide()
     {
         var now = DateTimeOffset.UtcNow;

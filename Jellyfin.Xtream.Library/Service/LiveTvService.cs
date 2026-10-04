@@ -1283,17 +1283,36 @@ public class LiveTvService : IDisposable
             var history = new CatchupHistoryCollector(channels, config);
 
             // Prefer upstream XMLTV (preserves category, rating, credits, icon, etc.).
-            // Fall back to JSON-based fetch only if the upstream file is unavailable.
+            // Fall back to JSON-based fetch only if the upstream file is unavailable. The
+            // fallback decision is tracked per provider: one provider's successful programmes or
+            // recorded history must not mask another provider's empty or failed fragment, or that
+            // provider's channels would go without a guide instead of falling back.
             var passthroughCount = 0;
-            var recordedCount = 0;
+            var fallbackProviders = new HashSet<int>();
             if (idMap.Count > 0)
             {
                 var fragments = await GetProviderXmltvFragmentsAsync(channels, cancellationToken).ConfigureAwait(false);
+                var providersWithXml = new HashSet<int>();
                 foreach (var (providerIndex, upstreamXml) in fragments)
                 {
+                    providersWithXml.Add(providerIndex);
                     var (written, recorded) = AppendUpstreamProgrammes(sb, upstreamXml, idMap, history, providerIndex, config, cancellationToken);
                     passthroughCount += written;
-                    recordedCount += recorded;
+
+                    // A fully-read upstream XMLTV that only recorded catch-up history (every
+                    // programme fell outside the EPG window) is not a failure for this provider.
+                    if (written == 0 && recorded == 0)
+                    {
+                        fallbackProviders.Add(providerIndex);
+                    }
+                }
+
+                foreach (var providerIndex in channels.Select(c => c.ProviderIndex).Distinct())
+                {
+                    if (!providersWithXml.Contains(providerIndex))
+                    {
+                        fallbackProviders.Add(providerIndex);
+                    }
                 }
 
                 if (fragments.Count > 0)
@@ -1301,18 +1320,24 @@ public class LiveTvService : IDisposable
                     _logger.LogInformation("Passed through {Count} programmes from upstream XMLTV", passthroughCount);
                 }
             }
-
-            // A fully-read upstream XMLTV that only recorded catch-up history (every programme
-            // fell outside the EPG window) is not a failure: falling back here would discard
-            // that history by rebuilding the collector from scratch below.
-            if (passthroughCount == 0 && recordedCount == 0)
+            else
             {
-                _logger.LogInformation("Upstream XMLTV unavailable or empty; falling back to per-channel JSON EPG");
+                fallbackProviders.UnionWith(channels.Select(c => c.ProviderIndex));
+            }
 
-                // Start over: a parse that failed half way collected half a guide, and recording a
-                // partial pull would let it replace stored programmes it simply did not reach.
-                history = new CatchupHistoryCollector(channels, config);
-                var epgData = await FetchEpgDataAsync(channels, history, config, cancellationToken).ConfigureAwait(false);
+            if (fallbackProviders.Count > 0)
+            {
+                _logger.LogInformation("Upstream XMLTV unavailable or empty for one or more providers; falling back to per-channel JSON EPG for those providers' channels");
+
+                // A provider whose XMLTV parse failed half way may have left partial,
+                // inconsistent history for its own channels: AppendUpstreamProgrammes records
+                // progressively as it reads, and an XmlException does not undo what it already
+                // recorded. Clear just that provider's entries before the JSON fallback rebuilds
+                // them from a full, consistent fetch; other providers' recorded history is left
+                // untouched.
+                history.ResetProviders(fallbackProviders);
+                var fallbackChannels = channels.Where(c => fallbackProviders.Contains(c.ProviderIndex)).ToList();
+                var epgData = await FetchEpgDataAsync(fallbackChannels, history, config, cancellationToken).ConfigureAwait(false);
 
                 foreach (var program in epgData.OrderBy(p => p.StartTimestamp))
                 {

@@ -134,6 +134,20 @@ internal sealed class CatchupHistoryCollector
     }
 
     /// <summary>
+    /// Clears any entries already recorded for these providers' channels, so a provider whose
+    /// own XMLTV parse failed half way does not keep the partial, inconsistent entries it
+    /// recorded before the JSON fallback rebuilds them from a full fetch.
+    /// </summary>
+    /// <param name="providerIndexes">The providers whose entries to clear.</param>
+    public void ResetProviders(IReadOnlyCollection<int> providerIndexes)
+    {
+        foreach (var key in _entries.Keys.Where(k => providerIndexes.Contains(k.ProviderIndex)).ToList())
+        {
+            _entries.TryRemove(key, out _);
+        }
+    }
+
+    /// <summary>
     /// One pull per catch-up channel, including those the guide said nothing about, so their
     /// stored history is still cut back to the archive horizon.
     /// </summary>
