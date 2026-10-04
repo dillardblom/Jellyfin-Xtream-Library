@@ -132,19 +132,19 @@ public sealed class XmltvPassthroughTests : IDisposable
         var baseUrlB = providerB.BaseUrl;
 
         _client
-            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "A", EpgChannelId = "shared" } });
         _client
-            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "B", EpgChannelId = "shared" } });
 
         _client
-            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
             .ReturnsAsync("<tv>"
                 + $"<programme start=\"{XmltvTime(now.AddMinutes(-30))}\" stop=\"{XmltvTime(now.AddMinutes(30))}\" channel=\"shared\"><title>From A</title></programme>"
                 + "</tv>");
         _client
-            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
             .ReturnsAsync("<tv>"
                 + $"<programme start=\"{XmltvTime(now.AddMinutes(-30))}\" stop=\"{XmltvTime(now.AddMinutes(30))}\" channel=\"shared\"><title>From B</title></programme>"
                 + "</tv>");
@@ -177,24 +177,24 @@ public sealed class XmltvPassthroughTests : IDisposable
         var baseUrlB = providerB.BaseUrl;
 
         _client
-            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "A", EpgChannelId = "a" } });
         _client
-            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetAllLiveStreamsAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<LiveStreamInfo> { new() { StreamId = 1, Num = 1, Name = "B", EpgChannelId = "b" } });
 
         _client
-            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlA), It.IsAny<CancellationToken>()))
             .ReturnsAsync("<tv>"
                 + $"<programme start=\"{XmltvTime(now.AddMinutes(-30))}\" stop=\"{XmltvTime(now.AddMinutes(30))}\" channel=\"a\"><title>From A</title></programme>"
                 + "</tv>");
         _client
-            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetXmltvAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), It.IsAny<CancellationToken>()))
             .ReturnsAsync("<tv>"
                 + $"<programme start=\"{XmltvTime(now.AddMinutes(-30))}\" stop=\"{XmltvTime(now.AddMinutes(30))}\" channel=\"b\"><title>Never reached</title></programme>"
                 + "<programme start=");
         _client
-            .Setup(c => c.GetSimpleDataTableAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlB), 1, It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetSimpleDataTableAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlB), 1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new EpgListings
             {
                 Listings = new List<EpgProgram>
@@ -215,7 +215,7 @@ public sealed class XmltvPassthroughTests : IDisposable
         xml.Should().NotContain("Never reached", "the broken fragment's partial output must be discarded, not left dangling");
         xml.Should().Contain("From JSON", "provider B must still fall back to its JSON EPG even though provider A's programmes made the aggregate passthrough count non-zero");
         _client.Verify(
-            c => c.GetSimpleDataTableAsync(It.Is<ConnectionInfo>(c => c.BaseUrl == baseUrlA), It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            c => c.GetSimpleDataTableAsync(It.Is<ConnectionInfo>(conn => conn.BaseUrl == baseUrlA), It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "provider A's XMLTV already succeeded, so it must not also be re-fetched through the JSON fallback");
     }
