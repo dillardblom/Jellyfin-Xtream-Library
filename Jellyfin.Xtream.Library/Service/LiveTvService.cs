@@ -1270,23 +1270,28 @@ public class LiveTvService : IDisposable
         // Fetch EPG data if enabled
         if (config.EnableEpg)
         {
-            // Build map: upstream epg_channel_id -> our xtream_ id
-            var idMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            // Build map: (provider, upstream epg_channel_id) -> our xtream_ id. Two providers can
+            // reuse the same epg_channel_id for two different channels, so the provider has to be
+            // part of the key: a plain EpgChannelId map would let the second provider's entry
+            // silently overwrite the first, or hand one provider's programmes to the other's channel.
+            var idMap = new Dictionary<(int ProviderIndex, string EpgChannelId), string>();
             foreach (var ch in channels)
             {
                 if (!string.IsNullOrEmpty(ch.EpgChannelId))
                 {
-                    idMap[ch.EpgChannelId] = XtreamTunerHost.BuildChannelId(ch.ProviderIndex, ch.StreamId);
+                    idMap[(ch.ProviderIndex, ch.EpgChannelId.ToUpperInvariant())] = XtreamTunerHost.BuildChannelId(ch.ProviderIndex, ch.StreamId);
                 }
             }
 
             var history = new CatchupHistoryCollector(channels, config);
 
             // Prefer upstream XMLTV (preserves category, rating, credits, icon, etc.).
-            // Fall back to JSON-based fetch only if the upstream file is unavailable. The
-            // fallback decision is tracked per provider: one provider's successful programmes or
-            // recorded history must not mask another provider's empty or failed fragment, or that
-            // provider's channels would go without a guide instead of falling back.
+            // Fall back to JSON-based fetch only if the upstream file is unavailable.
+            // Fetched and parsed one provider at a time, so a <programme> can be matched against
+            // idMap with the provider it actually came from, not just its bare channel id. The
+            // fallback decision is tracked per provider too: one provider's XMLTV being broken or
+            // empty must not be masked by another provider's programmes or recorded history padding out the total, or
+            // that provider's channels would go without a guide instead of falling back.
             var passthroughCount = 0;
             var fallbackProviders = new HashSet<int>();
             if (idMap.Count > 0)
@@ -1396,10 +1401,10 @@ public class LiveTvService : IDisposable
     }
 
     /// <summary>
-    /// Streams the upstream XMLTV document and appends each &lt;programme&gt; whose channel
-    /// is in <paramref name="idMap"/>, rewriting its channel attribute to our xtream_ id.
-    /// All other programme child elements (category, rating, credits, icon, etc.) are
-    /// preserved verbatim.
+    /// Streams one provider's upstream XMLTV document and appends each &lt;programme&gt; whose
+    /// (provider, channel) is in <paramref name="idMap"/>, rewriting its channel attribute to
+    /// our xtream_ id. All other programme child elements (category, rating, credits, icon,
+    /// etc.) are preserved verbatim.
     /// </summary>
     /// <returns>The programmes written to the visible EPG and the programmes recorded for
     /// catch-up history; both zero, with nothing appended, when the document could not be read
@@ -1407,7 +1412,7 @@ public class LiveTvService : IDisposable
     private (int Written, int Recorded) AppendUpstreamProgrammes(
         StringBuilder sb,
         string upstreamXml,
-        Dictionary<string, string> idMap,
+        Dictionary<(int ProviderIndex, string EpgChannelId), string> idMap,
         CatchupHistoryCollector history,
         int providerIndex,
         PluginConfiguration config,
@@ -1445,7 +1450,7 @@ public class LiveTvService : IDisposable
                 }
 
                 var upstreamCh = reader.GetAttribute("channel");
-                if (string.IsNullOrEmpty(upstreamCh) || !idMap.TryGetValue(upstreamCh, out var ourId))
+                if (string.IsNullOrEmpty(upstreamCh) || !idMap.TryGetValue((providerIndex, upstreamCh.ToUpperInvariant()), out var ourId))
                 {
                     reader.Skip();
                     continue;
@@ -1559,8 +1564,9 @@ public class LiveTvService : IDisposable
 
     /// <summary>
     /// Fetches each configured provider's upstream XMLTV, keeping them apart so a caller can
-    /// still tell which provider a &lt;programme&gt; came from (needed to keep catch-up history
-    /// from crossing providers that happen to reuse the same EPG channel id).
+    /// still tell which provider a &lt;programme&gt; came from (needed so two providers that reuse
+    /// the same EPG channel id do not get matched against each other's channels, or share
+    /// catch-up history).
     /// </summary>
     private async Task<List<(int ProviderIndex, string Xml)>> GetProviderXmltvFragmentsAsync(List<LiveStreamInfo> channels, CancellationToken cancellationToken)
     {
