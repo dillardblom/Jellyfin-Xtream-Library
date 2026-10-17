@@ -1294,6 +1294,12 @@ public class LiveTvService : IDisposable
             // that provider's channels would go without a guide instead of falling back.
             var passthroughCount = 0;
             var fallbackProviders = new HashSet<int>();
+
+            // Providers whose recorded history has to be rebuilt by the fallback. Not the same set:
+            // a provider whose XMLTV was read to the end but only held programmes outside the EPG
+            // window still needs the fallback for its visible guide, while what it recorded is
+            // complete and must be kept.
+            var resetProviders = new HashSet<int>();
             if (idMap.Count > 0)
             {
                 var fragments = await GetProviderXmltvFragmentsAsync(channels, cancellationToken).ConfigureAwait(false);
@@ -1304,11 +1310,16 @@ public class LiveTvService : IDisposable
                     var (written, recorded) = AppendUpstreamProgrammes(sb, upstreamXml, idMap, history, providerIndex, config, cancellationToken);
                     passthroughCount += written;
 
-                    // A fully-read upstream XMLTV that only recorded catch-up history (every
-                    // programme fell outside the EPG window) is not a failure for this provider.
-                    if (written == 0 && recorded == 0)
+                    // Nothing for the visible guide: fall back, or every channel of this provider
+                    // goes without a guide. Only a read that also recorded nothing (an empty
+                    // file, or a parse that failed) has history worth throwing away.
+                    if (written == 0)
                     {
                         fallbackProviders.Add(providerIndex);
+                        if (recorded == 0)
+                        {
+                            resetProviders.Add(providerIndex);
+                        }
                     }
                 }
 
@@ -1317,6 +1328,7 @@ public class LiveTvService : IDisposable
                     if (!providersWithXml.Contains(providerIndex))
                     {
                         fallbackProviders.Add(providerIndex);
+                        resetProviders.Add(providerIndex);
                     }
                 }
 
@@ -1328,6 +1340,7 @@ public class LiveTvService : IDisposable
             else
             {
                 fallbackProviders.UnionWith(channels.Select(c => c.ProviderIndex));
+                resetProviders.UnionWith(fallbackProviders);
             }
 
             if (fallbackProviders.Count > 0)
@@ -1339,8 +1352,8 @@ public class LiveTvService : IDisposable
                 // progressively as it reads, and an XmlException does not undo what it already
                 // recorded. Clear just that provider's entries before the JSON fallback rebuilds
                 // them from a full, consistent fetch; other providers' recorded history is left
-                // untouched.
-                history.ResetProviders(fallbackProviders);
+                // untouched, and so is a provider whose file was read in full.
+                history.ResetProviders(resetProviders);
                 var fallbackChannels = channels.Where(c => fallbackProviders.Contains(c.ProviderIndex)).ToList();
                 var epgData = await FetchEpgDataAsync(fallbackChannels, history, config, cancellationToken).ConfigureAwait(false);
 

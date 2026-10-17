@@ -553,12 +553,12 @@ public sealed class CatchupHistoryXmltvTests : IDisposable
     }
 
     [Fact]
-    public async Task AnXmltvWithOnlyPastProgrammesStillRecordsHistoryInsteadOfFallingBack()
+    public async Task AnXmltvWithOnlyPastProgrammesKeepsItsHistoryAndStillFallsBackForTheGuide()
     {
-        // A fully-read upstream XMLTV whose only programmes fall outside the EPG window writes
-        // nothing to the visible guide. That must not look like a parse failure: falling back
-        // to the JSON fetch here would rebuild the collector from scratch and discard the
-        // history this build already recorded.
+        // A fully-read upstream XMLTV whose programmes all fall outside the EPG window writes
+        // nothing to the visible guide. The guide must still come from the JSON fallback, or every
+        // channel of that provider is left without one, but what the file recorded is complete
+        // and must not be thrown away for it.
         var now = DateTimeOffset.UtcNow;
         _client
             .Setup(c => c.GetAllLiveStreamsAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
@@ -569,15 +569,27 @@ public sealed class CatchupHistoryXmltvTests : IDisposable
         _client
             .Setup(c => c.GetXmltvAsync(It.IsAny<ConnectionInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("<tv>" + Programme("arch", now.AddHours(-20), now.AddHours(-19), "Last night") + "</tv>");
+        _client
+            .Setup(c => c.GetSimpleDataTableAsync(It.IsAny<ConnectionInfo>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EpgListings
+            {
+                Listings = new List<EpgProgram>
+                {
+                    new()
+                    {
+                        StartTimestamp = now.AddMinutes(-30).ToUnixTimeSeconds(),
+                        StopTimestamp = now.AddMinutes(30).ToUnixTimeSeconds(),
+                        Title = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("On now")),
+                        Description = string.Empty,
+                    },
+                },
+            });
 
-        await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
+        var xml = await _liveTvService.GetXmltvEpgAsync(CancellationToken.None);
 
+        xml.Should().Contain("On now", "the visible guide comes from the fallback");
         var recorded = await _liveTvService.CatchupHistory.LoadAsync(ProviderKey, 1, CancellationToken.None);
-        recorded.Select(e => e.Title).Should().Equal("Last night");
-        _client.Verify(
-            c => c.GetSimpleDataTableAsync(It.IsAny<ConnectionInfo>(), It.IsAny<int>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "a valid upstream XMLTV must not trigger the JSON fallback just because every programme was in the past");
+        recorded.Select(e => e.Title).Should().Contain("Last night", "what the XMLTV recorded is kept");
     }
 
     [Fact]
